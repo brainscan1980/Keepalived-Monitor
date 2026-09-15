@@ -4,7 +4,10 @@ const fmtDate=s=>s?new Date(s).toLocaleString():'Noch kein Wechsel';
 async function load(){try{
   const s=await (await fetch('/api/status',{cache:'no-store'})).json();
   const nodes=Object.values(s.nodes||{}), cluster=s.cluster||{status:'UNKNOWN',message:'Status unbekannt'};
-  document.querySelector('#cluster').innerHTML=`<span class="${statusClass(cluster.status)}"><i class="dot"></i>${esc(cluster.status)}</span><div class="cluster-message">${esc(cluster.message)}</div>`;
+  const clusterEl=document.querySelector('#cluster');
+  clusterEl.innerHTML=`<span class="${statusClass(cluster.status)}"><i class="dot"></i>${esc(cluster.status)}</span>`;
+  clusterEl.title=cluster.message||'Status unbekannt';
+  clusterEl.setAttribute('aria-label',`${cluster.status}: ${cluster.message||'Status unbekannt'}`);
   document.querySelector('#nodes').innerHTML=nodes.map(n=>{
     const ready=n.online&&n.keepalived==='active';
     return `<div class="card"><b>${esc(n.name)}</b><div class="${ready?'good':n.online?'warn':'bad'} node-state"><i class="dot"></i>${n.online?'ONLINE':'OFFLINE'} · Keepalived ${esc(n.keepalived).toUpperCase()}</div><div class="meta">${esc(n.host)}<br>${esc(n.uptime)}</div>${!ready?`<div class="issue">⚠ ${n.online?'Nicht failoverbereit':'Node nicht erreichbar'}</div>`:''}</div>`
@@ -16,7 +19,7 @@ async function load(){try{
   document.querySelector('#updated').textContent='Letztes Update: '+(s.updated?new Date(s.updated).toLocaleString():'–');
   const h=await (await fetch('/api/history',{cache:'no-store'})).json();
   document.querySelector('#history').innerHTML=h.length?h.slice(0,15).map(x=>`<div class="row history-row"><span>${new Date(x.ts).toLocaleString()}</span><b>${esc(x.name)}</b><span>${esc(x.old)} → ${esc(x.new)}</span><span><span class="badge ${x.type==='LOST'?'bad':x.type==='RECOVERED'?'good':'warn'}">${esc(x.type)}</span></span></div>`).join(''):'<div class="card meta">Noch keine Failover-Ereignisse aufgezeichnet.</div>';
-}catch(e){document.querySelector('#cluster').innerHTML='<span class="bad"><i class="dot"></i>UNKNOWN</span><div class="cluster-message">Dashboard nicht erreichbar</div>'}}
+}catch(e){const clusterEl=document.querySelector('#cluster');clusterEl.innerHTML='<span class="bad"><i class="dot"></i>UNKNOWN</span>';clusterEl.title='Dashboard nicht erreichbar';clusterEl.setAttribute('aria-label','UNKNOWN: Dashboard nicht erreichbar')}}
 
 const systemDark=window.matchMedia('(prefers-color-scheme: dark)');
 const getTheme=()=>localStorage.getItem('theme')||'auto';
