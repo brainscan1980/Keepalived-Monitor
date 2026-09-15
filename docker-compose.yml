@@ -1,0 +1,14 @@
+services:
+  keepalived-monitor:
+    build: .
+    container_name: keepalived-monitor
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./config:/app/config:ro
+      - ./ssh:/root/.ssh:ro
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Berlin
+      - CONFIG_FILE=/app/config/config.yml

@@ -18,7 +18,7 @@ Teste vorher vom Docker-Host, dass der Key funktioniert.
 
 ## 2. Konfiguration
 
-`config/config.yml` enthält Nodes und VIPs. Die Caddy-VIP ist absichtlich noch auskommentiert, da sie im Projekt nicht bekannt ist.
+`config/config.yml` enthält Nodes und VIPs. Vorkonfiguriert sind DNS (`192.168.1.100`), Caddy (`192.168.1.101`) und Vaultwarden (`192.168.1.102`).
 
 ## 3. Start
 
@@ -28,7 +28,7 @@ docker compose build
 docker compose up -d
 ```
 
-Danach: `http://DOCKER-HOST:8088`
+Danach: `http://DOCKER-HOST:5001`
 
 ## Sicherheit
 
@@ -36,4 +36,4 @@ Der SSH-Key wird read-only gemountet. Für eine noch strengere Installation empf
 
 ## Reverse Proxy
 
-Das Backend lauscht containerintern auf Port 8080 und kann problemlos hinter Caddy veröffentlicht werden.
+Das Backend lauscht containerintern auf Port 5001 und kann problemlos hinter Caddy veröffentlicht werden.

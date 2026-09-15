@@ -1,0 +1,36 @@
+# SSH secrets and host fingerprints
+ssh/id_ed25519
+ssh/id_rsa
+ssh/known_hosts
+
+# Runtime data
+data/*
+!data/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+logs/
+*.tmp
+*.bak
+*~
