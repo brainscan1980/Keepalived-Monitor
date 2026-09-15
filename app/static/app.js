@@ -17,4 +17,18 @@ async function load(){try{
   const h=await (await fetch('/api/history',{cache:'no-store'})).json();
   document.querySelector('#history').innerHTML=h.length?h.slice(0,15).map(x=>`<div class="row history-row"><span>${new Date(x.ts).toLocaleString()}</span><b>${esc(x.name)}</b><span>${esc(x.old)} → ${esc(x.new)}</span><span><span class="badge ${x.type==='LOST'?'bad':x.type==='RECOVERED'?'good':'warn'}">${esc(x.type)}</span></span></div>`).join(''):'<div class="card meta">Noch keine Failover-Ereignisse aufgezeichnet.</div>';
 }catch(e){document.querySelector('#cluster').innerHTML='<span class="bad"><i class="dot"></i>UNKNOWN</span><div class="cluster-message">Dashboard nicht erreichbar</div>'}}
-setInterval(load,5000);load();document.querySelector('#theme').onclick=()=>{document.documentElement.classList.toggle('dark');localStorage.dark=document.documentElement.classList.contains('dark')?'1':'0'};if(localStorage.dark==='1')document.documentElement.classList.add('dark');if('serviceWorker'in navigator)navigator.serviceWorker.register('/static/service-worker.js');
+
+const systemDark=window.matchMedia('(prefers-color-scheme: dark)');
+const getTheme=()=>localStorage.getItem('theme')||'auto';
+function applyTheme(mode=getTheme()){
+  const dark=mode==='dark'||(mode==='auto'&&systemDark.matches);
+  document.documentElement.classList.toggle('dark',dark);
+  document.documentElement.dataset.theme=mode;
+  document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===mode));
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.content=dark?'#0c1118':'#f4f6f8';
+}
+document.querySelectorAll('[data-theme]').forEach(b=>b.addEventListener('click',()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)}));
+systemDark.addEventListener?.('change',()=>{if(getTheme()==='auto')applyTheme('auto')});
+applyTheme();
+setInterval(load,5000);load();if('serviceWorker'in navigator)navigator.serviceWorker.register('/static/service-worker.js');
