@@ -7,7 +7,7 @@ app = Flask(__name__)
 CONFIG_FILE = os.getenv('CONFIG_FILE','/app/config/config.yml')
 DB='/app/data/history.db'
 lock=threading.Lock()
-cache={'nodes':{},'vrrp':[],'updated':None}
+cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
 
 def cfg():
     with open(CONFIG_FILE, encoding='utf-8') as f: return yaml.safe_load(f)
@@ -34,8 +34,7 @@ def poll_node(node):
     rc,out,err=ssh(node,cmd)
     d={'name':node['name'],'host':node['host'],'online':rc==0,'keepalived':'unknown','uptime':'-','addresses':[],'error':err if rc else ''}
     if rc: return d
-    lines=out.splitlines()
-    for line in lines:
+    for line in out.splitlines():
         if line.startswith('KEEP='): d['keepalived']=line[5:].strip()
         elif line.startswith('UP='): d['uptime']=line[3:].strip()
         elif line.startswith('ADDR='):
@@ -53,13 +52,42 @@ def record(name,new):
             else: c.execute('INSERT INTO state(name,master) VALUES(?,?)',(name,new))
             if old is not None: c.execute('INSERT INTO events(ts,name,old_master,new_master) VALUES(?,?,?,?)',(datetime.now().isoformat(timespec='seconds'),name,old,new))
 
+def vrrp_metrics(name):
+    with sqlite3.connect(DB) as c:
+        rows=c.execute('SELECT ts,old_master,new_master FROM events WHERE name=? ORDER BY id DESC',(name,)).fetchall()
+    return {
+        'failovers': len(rows),
+        'last_change': rows[0][0] if rows else None
+    }
+
+def cluster_health(nodes, vrrp):
+    critical=[]; degraded=[]
+    for v in vrrp:
+        if not v['healthy']:
+            if v['master']=='MULTIPLE': critical.append(f"{v['name']}: mehrere MASTER erkannt")
+            else: critical.append(f"{v['name']}: kein MASTER")
+    if critical:
+        return {'status':'CRITICAL','message':' · '.join(critical),'issues':critical}
+    for n in nodes.values():
+        if not n['online']: degraded.append(f"{n['name']} ist offline")
+        elif n['keepalived']!='active': degraded.append(f"Keepalived auf {n['name']} ist {n['keepalived']}")
+    if degraded:
+        return {'status':'DEGRADED','message':'Redundanz eingeschränkt: '+' · '.join(degraded),'issues':degraded}
+    if nodes and vrrp:
+        return {'status':'HEALTHY','message':'Cluster vollständig funktions- und failoverbereit','issues':[]}
+    return {'status':'UNKNOWN','message':'Clusterzustand kann nicht bestimmt werden','issues':[]}
+
 def poll():
     c=cfg(); ns={n['name']:poll_node(n) for n in c.get('nodes',[])}; vs=[]
     for v in c.get('vrrp',[]):
         owners=[name for name in v.get('nodes',[]) if v['vip'] in ns.get(name,{}).get('addresses',[])]
         master=owners[0] if len(owners)==1 else ('MULTIPLE' if len(owners)>1 else None)
-        vs.append({**v,'master':master,'healthy':len(owners)==1}); record(v['name'],master or 'NONE')
-    with lock: cache.update(nodes=ns,vrrp=vs,updated=datetime.now().isoformat(timespec='seconds'))
+        record(v['name'],master or 'NONE')
+        metrics=vrrp_metrics(v['name'])
+        roles={name:('MASTER' if name==master else 'BACKUP') for name in v.get('nodes',[])}
+        vs.append({**v,'master':master,'healthy':len(owners)==1,'roles':roles,**metrics})
+    health=cluster_health(ns,vs)
+    with lock: cache.update(nodes=ns,vrrp=vs,cluster=health,updated=datetime.now().isoformat(timespec='seconds'))
 
 def loop():
     while True:
@@ -76,7 +104,12 @@ def status():
 def history():
     with sqlite3.connect(DB) as c:
         rows=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT 50').fetchall()
-    return jsonify([{'ts':r[0],'name':r[1],'old':r[2],'new':r[3]} for r in rows])
+    result=[]
+    for r in rows:
+        old,new=r[2],r[3]
+        kind='LOST' if new=='NONE' else ('RECOVERED' if old=='NONE' else 'FAILOVER')
+        result.append({'ts':r[0],'name':r[1],'old':old,'new':new,'type':kind})
+    return jsonify(result)
 
 @app.route('/healthz')
 def healthz(): return {'ok':True}
