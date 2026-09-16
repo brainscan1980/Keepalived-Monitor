@@ -1,3 +1,14 @@
+# SSH keys / runtime SSH configuration
+ssh/*
+!ssh/.gitkeep
+
+# Local environment / secrets
+.env
+
+# Runtime data
+data/*
+!data/.gitkeep
+
 # SSH secrets and host fingerprints
 ssh/id_ed25519
 ssh/id_rsa
