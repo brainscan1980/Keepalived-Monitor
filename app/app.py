@@ -5,6 +5,7 @@ from functools import wraps
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
 from cryptography.fernet import Fernet, InvalidToken
 import yaml
+from cluster_validation import validate_cluster
 
 app=Flask(__name__)
 app.secret_key=os.getenv('SECRET_KEY') or secrets.token_hex(32)
@@ -186,17 +187,28 @@ def vrrp_metrics(name):
     with sqlite3.connect(DB) as c:r=c.execute('SELECT ts FROM events WHERE name=? ORDER BY id DESC',(name,)).fetchall()
     return {'failovers':len(r),'last_change':r[0][0] if r else None}
 def cluster_health(nodes,vrrp):
-    critical=[];degraded=[]
-    for v in vrrp:
-        if not v['healthy']:critical.append(f"{v['name']}: {'mehrere MASTER erkannt' if v['master']=='MULTIPLE' else 'kein MASTER'}")
-    if critical:return {'status':'CRITICAL','message':' · '.join(critical),'issues':critical}
-    for n in nodes.values():
-        if n.get('maintenance',{}).get('active'):continue
-        if not n['online']:degraded.append(f"{n['name']} ist offline")
-        elif n['keepalived']!='active':degraded.append(f"Keepalived auf {n['name']} ist {n['keepalived']}")
-    if degraded:return {'status':'DEGRADED','message':'Redundanz eingeschränkt: '+' · '.join(degraded),'issues':degraded}
-    if nodes and vrrp:return {'status':'HEALTHY','message':'Cluster vollständig funktions- und failoverbereit','issues':[]}
-    return {'status':'UNKNOWN','message':'Clusterzustand kann nicht bestimmt werden','issues':[]}
+    diagnosis=validate_cluster(nodes,vrrp)
+
+    status_map={
+        'OK':'HEALTHY',
+        'WARNING':'DEGRADED',
+        'ERROR':'CRITICAL',
+        'UNKNOWN':'UNKNOWN',
+    }
+
+    issues=[
+        check['message']
+        for instance in diagnosis.get('instances',[])
+        for check in instance.get('checks',[])
+        if check.get('level') in {'WARNING','ERROR','UNKNOWN'}
+    ]
+
+    return {
+        'status':status_map.get(diagnosis.get('status'),'UNKNOWN'),
+        'message':diagnosis.get('message','Clusterzustand kann nicht bestimmt werden'),
+        'issues':issues,
+        'diagnosis':diagnosis,
+    }
 def poll():
     c=cfg();ns={n['name']:poll_node(n) for n in c.get('nodes',[])}
     for name in ns:ns[name]['maintenance']=maintenance_info(name)
