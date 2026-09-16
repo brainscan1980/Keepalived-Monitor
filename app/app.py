@@ -33,7 +33,7 @@ def record_availability(nodes):
             r=c.execute('SELECT started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state WHERE name=?',(name,)).fetchone()
             if r is None:
                 down=now_s if not online and not maintenance else None
-                c.execute('INSERT INTO availability_state(name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end) VALUES(?,?,?,?,?,0,0,?,?,?,?,?)',(name,now_s,now_s,online,maintenance,1 if down else 0,down,down,None))
+                c.execute('INSERT INTO availability_state(name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end) VALUES(?,?,?,?,?,0,0,?,?,?,?)',(name,now_s,now_s,online,maintenance,1 if down else 0,down,down,None))
                 continue
             started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r
             try:elapsed=max(0,min((now-datetime.fromisoformat(last_ts)).total_seconds(),max_gap))
