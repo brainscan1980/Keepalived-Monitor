@@ -10,7 +10,7 @@ app=Flask(__name__)
 app.secret_key=os.getenv('SECRET_KEY') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','false').lower()=='true')
 CONFIG_FILE=os.getenv('CONFIG_FILE','/app/config/config.yml'); DB='/app/data/history.db'; SETTINGS_FILE='/app/data/settings.json'
-lock=threading.Lock(); notification_lock=threading.Lock(); settings_lock=threading.Lock(); cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
+lock=threading.Lock(); notification_lock=threading.Lock(); settings_lock=threading.Lock(); availability_lock=threading.Lock(); cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
 def cfg():
     with open(CONFIG_FILE,encoding='utf-8') as f:return yaml.safe_load(f) or {}
 def db_init():
@@ -27,7 +27,7 @@ def record_notification(kind,node,ok,error=None,ts=None):
     with sqlite3.connect(DB) as c:c.execute('INSERT INTO notification_history(ts,type,node,ok,error) VALUES(?,?,?,?,?)',(ts or datetime.now().isoformat(timespec='seconds'),kind,node,1 if ok else 0,safe_error))
 def record_availability(nodes):
     now=datetime.now();now_s=now.isoformat(timespec='seconds');max_gap=max(15,int(cfg().get('refresh_seconds',5))*3)
-    with sqlite3.connect(DB) as c:
+    with availability_lock,sqlite3.connect(DB) as c:
         for name,node in nodes.items():
             online=1 if node.get('online') else 0;maintenance=1 if node.get('maintenance',{}).get('active') else 0
             r=c.execute('SELECT started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state WHERE name=?',(name,)).fetchone()
@@ -43,11 +43,14 @@ def record_availability(nodes):
                 if last_online:online_sec+=elapsed
             if maintenance:
                 current_down=None
-            elif not online and (last_online or last_maintenance):
-                outages+=1;current_down=now_s;last_down_start=now_s
-            elif online and not last_online and not last_maintenance:
-                if current_down:last_down_end=now_s
-                current_down=None
+            elif not online:
+                if current_down is None and (last_online or last_maintenance):
+                    outages+=1;current_down=now_s;last_down_start=now_s
+            elif current_down:
+                # Erst zwei aufeinanderfolgende ONLINE-Polls beenden einen Ausfall.
+                # Dadurch erzeugt ein kurzer SSH-Erfolg während eines Reboots keinen zweiten Ausfall.
+                if last_online:
+                    last_down_end=now_s;current_down=None
             c.execute('UPDATE availability_state SET last_ts=?,last_online=?,last_maintenance=?,monitored_seconds=?,online_seconds=?,outages=?,current_down_since=?,last_down_start=?,last_down_end=? WHERE name=?',(now_s,online,maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end,name))
 def availability_stats():
     result=[]
