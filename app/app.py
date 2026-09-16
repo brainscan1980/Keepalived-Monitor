@@ -21,9 +21,43 @@ def db_init():
         c.execute('CREATE TABLE IF NOT EXISTS node_alert_state (name TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, is_down INTEGER NOT NULL DEFAULT 0, down_since TEXT, last_alert TEXT, last_recovery TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS notification_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, type TEXT NOT NULL, node TEXT, ok INTEGER NOT NULL, error TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_notification_history_id ON notification_history(id DESC)')
+        c.execute('CREATE TABLE IF NOT EXISTS availability_state (name TEXT PRIMARY KEY, started_at TEXT NOT NULL, last_ts TEXT NOT NULL, last_online INTEGER NOT NULL, last_maintenance INTEGER NOT NULL DEFAULT 0, monitored_seconds REAL NOT NULL DEFAULT 0, online_seconds REAL NOT NULL DEFAULT 0, outages INTEGER NOT NULL DEFAULT 0, current_down_since TEXT, last_down_start TEXT, last_down_end TEXT)')
 def record_notification(kind,node,ok,error=None,ts=None):
     safe_error=str(error or '').strip()[:500] or None
     with sqlite3.connect(DB) as c:c.execute('INSERT INTO notification_history(ts,type,node,ok,error) VALUES(?,?,?,?,?)',(ts or datetime.now().isoformat(timespec='seconds'),kind,node,1 if ok else 0,safe_error))
+def record_availability(nodes):
+    now=datetime.now();now_s=now.isoformat(timespec='seconds');max_gap=max(15,int(cfg().get('refresh_seconds',5))*3)
+    with sqlite3.connect(DB) as c:
+        for name,node in nodes.items():
+            online=1 if node.get('online') else 0;maintenance=1 if node.get('maintenance',{}).get('active') else 0
+            r=c.execute('SELECT started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state WHERE name=?',(name,)).fetchone()
+            if r is None:
+                down=now_s if not online and not maintenance else None
+                c.execute('INSERT INTO availability_state(name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end) VALUES(?,?,?,?,?,0,0,?,?,?,?,?)',(name,now_s,now_s,online,maintenance,1 if down else 0,down,down,None))
+                continue
+            started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r
+            try:elapsed=max(0,min((now-datetime.fromisoformat(last_ts)).total_seconds(),max_gap))
+            except Exception:elapsed=0
+            if not last_maintenance:
+                monitored+=elapsed
+                if last_online:online_sec+=elapsed
+            if maintenance:
+                current_down=None
+            elif not online and (last_online or last_maintenance):
+                outages+=1;current_down=now_s;last_down_start=now_s
+            elif online and not last_online and not last_maintenance:
+                if current_down:last_down_end=now_s
+                current_down=None
+            c.execute('UPDATE availability_state SET last_ts=?,last_online=?,last_maintenance=?,monitored_seconds=?,online_seconds=?,outages=?,current_down_since=?,last_down_start=?,last_down_end=? WHERE name=?',(now_s,online,maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end,name))
+def availability_stats():
+    result=[]
+    with sqlite3.connect(DB) as c:
+        rows=c.execute('SELECT name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state ORDER BY name').fetchall()
+    for r in rows:
+        name,started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r
+        monitored=float(monitored or 0);online_sec=float(online_sec or 0);downtime=max(0,monitored-online_sec);pct=(online_sec/monitored*100) if monitored>0 else None
+        result.append({'name':name,'started_at':started,'last_ts':last_ts,'online':bool(last_online),'maintenance':bool(last_maintenance),'monitored_seconds':round(monitored),'online_seconds':round(online_sec),'downtime_seconds':round(downtime),'availability':round(pct,3) if pct is not None else None,'outages':int(outages or 0),'current_down_since':current_down,'last_down_start':last_down_start,'last_down_end':last_down_end})
+    return result
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
 def env_bool(n,d=False):return os.getenv(n,str(d)).lower() in {'1','true','yes','on'}
 def defaults():
@@ -179,6 +213,7 @@ def cluster_health(nodes,vrrp):
 def poll():
     c=cfg();ns={n['name']:poll_node(n) for n in c.get('nodes',[])}
     for name in ns:ns[name]['maintenance']=maintenance_info(name)
+    record_availability(ns)
     process_node_notifications(ns)
     for name in ns:ns[name]['notification']=notification_status(name)
     vs=[]
@@ -249,6 +284,9 @@ def notification_history():
 @login_required
 def status():
     with lock:return jsonify(cache)
+@app.get('/api/availability')
+@login_required
+def availability():return jsonify(availability_stats())
 @app.route('/api/history')
 @login_required
 def history():
