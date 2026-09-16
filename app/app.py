@@ -1,5 +1,6 @@
-import json, os, secrets, sqlite3, subprocess, threading, time
+import json, os, secrets, sqlite3, subprocess, threading, time, smtplib, ssl
 from datetime import datetime
+from email.message import EmailMessage
 from functools import wraps
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
 import yaml
@@ -7,7 +8,7 @@ import yaml
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','false').lower()=='true')
-CONFIG_FILE=os.getenv('CONFIG_FILE','/app/config/config.yml'); DB='/app/data/history.db'; lock=threading.Lock()
+CONFIG_FILE=os.getenv('CONFIG_FILE','/app/config/config.yml'); DB='/app/data/history.db'; lock=threading.Lock(); notification_lock=threading.Lock()
 cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
 
 def cfg():
@@ -15,7 +16,9 @@ def cfg():
 def db_init():
     os.makedirs(os.path.dirname(DB),exist_ok=True)
     with sqlite3.connect(DB) as c:
-        c.execute('CREATE TABLE IF NOT EXISTS state (name TEXT PRIMARY KEY, master TEXT)'); c.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, name TEXT, old_master TEXT, new_master TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS state (name TEXT PRIMARY KEY, master TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, name TEXT, old_master TEXT, new_master TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS node_alert_state (name TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, is_down INTEGER NOT NULL DEFAULT 0, down_since TEXT, last_alert TEXT, last_recovery TEXT)')
 def ssh(node,command,timeout=8):
     s=cfg().get('ssh',{}); args=['ssh','-o','BatchMode=yes','-o',f"ConnectTimeout={s.get('connect_timeout',3)}"]
     if s.get('key_file'):args+=['-i',s['key_file']]
@@ -34,6 +37,73 @@ def login_required(fn):
         return fn(*a,**kw)
     return wrapped
 def csrf_ok():return secrets.compare_digest(str(session.get('csrf','')),str(request.headers.get('X-CSRF-Token','')))
+def mail_enabled():return os.getenv('MAIL_ENABLED','false').lower()=='true'
+def send_mail(subject,body):
+    if not mail_enabled():raise RuntimeError('E-Mail-Benachrichtigungen sind deaktiviert')
+    host=os.getenv('SMTP_HOST','').strip(); port=int(os.getenv('SMTP_PORT','587')); security=os.getenv('SMTP_SECURITY','starttls').lower().strip()
+    username=os.getenv('SMTP_USERNAME','').strip(); password=os.getenv('SMTP_PASSWORD',''); sender=os.getenv('MAIL_FROM','').strip() or username
+    recipients=[x.strip() for x in os.getenv('MAIL_TO','').replace(';',',').split(',') if x.strip()]
+    if not host or not sender or not recipients:raise RuntimeError('SMTP_HOST, MAIL_FROM und MAIL_TO müssen gesetzt sein')
+    msg=EmailMessage(); msg['Subject']=subject; msg['From']=sender; msg['To']=', '.join(recipients); msg.set_content(body)
+    context=ssl.create_default_context()
+    if security in {'ssl','smtps'}:
+        with smtplib.SMTP_SSL(host,port,timeout=15,context=context) as smtp:
+            if username:smtp.login(username,password)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(host,port,timeout=15) as smtp:
+            smtp.ehlo()
+            if security=='starttls':smtp.starttls(context=context); smtp.ehlo()
+            if username:smtp.login(username,password)
+            smtp.send_message(msg)
+def fmt_duration(start,end):
+    try:
+        seconds=max(0,int((datetime.fromisoformat(end)-datetime.fromisoformat(start)).total_seconds()))
+        d,seconds=divmod(seconds,86400); h,seconds=divmod(seconds,3600); m,s=divmod(seconds,60)
+        parts=[]
+        if d:parts.append(f'{d} Tag(e)')
+        if h:parts.append(f'{h} Std.')
+        if m:parts.append(f'{m} Min.')
+        if not parts:parts.append(f'{s} Sek.')
+        return ' '.join(parts)
+    except Exception:return 'unbekannt'
+def notification_cfg():
+    n=cfg().get('notifications',{}).get('node_down',{}) or {}
+    return {'enabled':bool(n.get('enabled',True)),'failures_before_alert':max(1,int(n.get('failures_before_alert',3))),'recovery_mail':bool(n.get('recovery_mail',True))}
+def notification_status(name):
+    settings=notification_cfg()
+    with sqlite3.connect(DB) as c:row=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
+    return {'enabled':mail_enabled() and settings['enabled'],'failures':row[0] if row else 0,'is_down':bool(row[1]) if row else False,'down_since':row[2] if row else None,'last_alert':row[3] if row else None,'last_recovery':row[4] if row else None,'failures_before_alert':settings['failures_before_alert']}
+def process_node_notifications(nodes):
+    settings=notification_cfg()
+    if not settings['enabled']:return
+    now=datetime.now().isoformat(timespec='seconds')
+    with notification_lock:
+        for name,node in nodes.items():
+            with sqlite3.connect(DB) as c:
+                row=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
+                if row is None:
+                    c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,?,?)',(name,0 if node['online'] else 1,0)); continue
+                failures,is_down,down_since,last_alert,last_recovery=row
+                if node['online']:
+                    if is_down:
+                        if mail_enabled() and settings['recovery_mail']:
+                            try:
+                                send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}\n\nDer Node ist wieder per SSH erreichbar.')
+                            except Exception as e:
+                                print(f'mail recovery error {name}: {e}',flush=True); continue
+                        c.execute('UPDATE node_alert_state SET failures=0,is_down=0,down_since=NULL,last_recovery=? WHERE name=?',(now,name))
+                    elif failures:c.execute('UPDATE node_alert_state SET failures=0 WHERE name=?',(name,))
+                else:
+                    failures+=1
+                    if not is_down and failures>=settings['failures_before_alert']:
+                        if mail_enabled():
+                            try:
+                                send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}\nKeepalived: unbekannt\n\nDie SSH-Verbindung zum Node ist mehrfach hintereinander fehlgeschlagen.')
+                            except Exception as e:
+                                print(f'mail alert error {name}: {e}',flush=True); c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name)); continue
+                        c.execute('UPDATE node_alert_state SET failures=?,is_down=1,down_since=?,last_alert=? WHERE name=?',(failures,now,now,name))
+                    else:c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name))
 def poll_node(node):
     cmd="printf 'KEEP='; systemctl is-active keepalived 2>/dev/null || true; printf 'UP='; uptime -p 2>/dev/null || true; printf 'ADDR='; ip -j addr show 2>/dev/null || true"
     rc,out,err=ssh(node,cmd); d={'name':node['name'],'host':node['host'],'online':rc==0,'keepalived':'unknown','uptime':'-','addresses':[],'error':err if rc else ''}
@@ -69,7 +139,9 @@ def cluster_health(nodes,vrrp):
     if nodes and vrrp:return {'status':'HEALTHY','message':'Cluster vollständig funktions- und failoverbereit','issues':[]}
     return {'status':'UNKNOWN','message':'Clusterzustand kann nicht bestimmt werden','issues':[]}
 def poll():
-    c=cfg(); ns={n['name']:poll_node(n) for n in c.get('nodes',[])}; vs=[]
+    c=cfg(); ns={n['name']:poll_node(n) for n in c.get('nodes',[])}; process_node_notifications(ns)
+    for name in ns:ns[name]['notification']=notification_status(name)
+    vs=[]
     for v in c.get('vrrp',[]):
         owners=[name for name in v.get('nodes',[]) if v['vip'] in ns.get(name,{}).get('addresses',[])]; master=owners[0] if len(owners)==1 else ('MULTIPLE' if len(owners)>1 else None); record(v['name'],master or 'NONE'); roles={name:('MASTER' if name==master else 'BACKUP') for name in v.get('nodes',[])}; vs.append({**v,'master':master,'healthy':len(owners)==1,'roles':roles,**vrrp_metrics(v['name'])})
     with lock:cache.update(nodes=ns,vrrp=vs,cluster=cluster_health(ns,vs),updated=datetime.now().isoformat(timespec='seconds'))
@@ -108,6 +180,14 @@ def status():
 def history():
     with sqlite3.connect(DB) as c:rows=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT 50').fetchall()
     return jsonify([{'ts':r[0],'name':r[1],'old':r[2],'new':r[3],'type':'LOST' if r[3]=='NONE' else ('RECOVERED' if r[2]=='NONE' else 'FAILOVER')} for r in rows])
+@app.post('/api/notifications/test')
+@login_required
+def test_notification():
+    if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
+    try:
+        now=datetime.now().isoformat(timespec='seconds'); send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.')
+        return jsonify({'ok':True,'message':'Testmail wurde gesendet.'})
+    except Exception as e:return jsonify({'ok':False,'error':str(e)}),502
 @app.post('/api/nodes/<name>/keepalived/<action>')
 @login_required
 def keepalived_action(name,action):
@@ -115,22 +195,11 @@ def keepalived_action(name,action):
     if action not in {'start','stop','restart'}:return jsonify({'ok':False,'error':'Aktion nicht erlaubt'}),400
     node=node_by_name(name)
     if not node:return jsonify({'ok':False,'error':'Node nicht gefunden'}),404
-
-    # systemctl is-active returns exit code 3 for an inactive service. That is the
-    # expected result after a successful stop, so do not chain it with &&.
     rc,out,err=ssh(node,f'systemctl {action} keepalived',12)
-    if rc!=0:
-        return jsonify({'ok':False,'status':'unknown','error':err or out or f'systemctl {action} fehlgeschlagen'}),502
-
-    # Verify the resulting state separately. For stop, "inactive" is success.
-    check_rc,status_out,status_err=ssh(node,'systemctl is-active keepalived',8)
-    service_status=status_out.splitlines()[-1].strip() if status_out else 'unknown'
-    expected={'start':'active','restart':'active','stop':'inactive'}[action]
-    ok=service_status==expected
-
+    if rc!=0:return jsonify({'ok':False,'status':'unknown','error':err or out or f'systemctl {action} fehlgeschlagen'}),502
+    check_rc,status_out,status_err=ssh(node,'systemctl is-active keepalived',8); service_status=status_out.splitlines()[-1].strip() if status_out else 'unknown'; expected={'start':'active','restart':'active','stop':'inactive'}[action]; ok=service_status==expected
     try:poll()
     except Exception:pass
-
     error='' if ok else (status_err or f'Erwarteter Status {expected}, erhalten: {service_status}')
     return jsonify({'ok':ok,'status':service_status,'error':error}),200 if ok else 502
 @app.get('/api/nodes/<name>/keepalived/logs')
