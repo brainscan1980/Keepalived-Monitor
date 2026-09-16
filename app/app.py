@@ -115,10 +115,24 @@ def keepalived_action(name,action):
     if action not in {'start','stop','restart'}:return jsonify({'ok':False,'error':'Aktion nicht erlaubt'}),400
     node=node_by_name(name)
     if not node:return jsonify({'ok':False,'error':'Node nicht gefunden'}),404
-    rc,out,err=ssh(node,f'systemctl {action} keepalived && systemctl is-active keepalived',12)
+
+    # systemctl is-active returns exit code 3 for an inactive service. That is the
+    # expected result after a successful stop, so do not chain it with &&.
+    rc,out,err=ssh(node,f'systemctl {action} keepalived',12)
+    if rc!=0:
+        return jsonify({'ok':False,'status':'unknown','error':err or out or f'systemctl {action} fehlgeschlagen'}),502
+
+    # Verify the resulting state separately. For stop, "inactive" is success.
+    check_rc,status_out,status_err=ssh(node,'systemctl is-active keepalived',8)
+    service_status=status_out.splitlines()[-1].strip() if status_out else 'unknown'
+    expected={'start':'active','restart':'active','stop':'inactive'}[action]
+    ok=service_status==expected
+
     try:poll()
     except Exception:pass
-    return jsonify({'ok':rc==0,'status':out.splitlines()[-1] if out else 'unknown','error':err}),200 if rc==0 else 502
+
+    error='' if ok else (status_err or f'Erwarteter Status {expected}, erhalten: {service_status}')
+    return jsonify({'ok':ok,'status':service_status,'error':error}),200 if ok else 502
 @app.get('/api/nodes/<name>/keepalived/logs')
 @login_required
 def keepalived_logs(name):
