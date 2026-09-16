@@ -6,7 +6,7 @@ services:
     ports:
       - "5001:5001"
     volumes:
-      - ./config:/app/config:ro
+      - ./config:/app/config
       - ./ssh:/root/.ssh:ro
       - ./data:/app/data
     environment:
