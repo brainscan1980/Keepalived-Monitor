@@ -11,6 +11,11 @@ _started=False
 # 24h/7d/30d dashboard views and keeps the database small.
 SAMPLE_INTERVAL=60
 RETENTION_DAYS=32
+WINDOWS={
+    '24h': {'hours':24,'bucket_minutes':60},
+    '7d': {'hours':168,'bucket_minutes':360},
+    '30d': {'hours':720,'bucket_minutes':1440},
+}
 
 
 def _now():
@@ -74,8 +79,22 @@ def _auth():
     return bool(_core.session.get('authenticated'))
 
 
+def _window_config(value):
+    return WINDOWS.get(value,WINDOWS['24h'])
+
+
 def _window_hours(value):
-    return {'24h':24,'7d':168,'30d':720}.get(value,24)
+    return _window_config(value)['hours']
+
+
+def _parse_ts(value):
+    return datetime.fromisoformat(value)
+
+
+def _bucket_start(dt,bucket_minutes):
+    minutes=(dt.hour*60+dt.minute)//bucket_minutes*bucket_minutes
+    day_start=dt.replace(hour=0,minute=0,second=0,microsecond=0)
+    return day_start+timedelta(minutes=minutes)
 
 
 def _node_stats(since):
@@ -110,6 +129,51 @@ def _vrrp_stats(since):
     return out
 
 
+def _node_series(since,bucket_minutes):
+    with sqlite3.connect(_core.DB) as c:
+        rows=c.execute('SELECT node,ts,online,keepalived_active,maintenance FROM statistics_samples WHERE ts>=? ORDER BY node,ts',(since,)).fetchall()
+    grouped={}
+    for name,ts,online,keep,maintenance in rows:
+        bucket=_bucket_start(_parse_ts(ts),bucket_minutes).isoformat(timespec='minutes')
+        item=grouped.setdefault(name,{}).setdefault(bucket,{'samples':0,'monitored':0,'online':0,'keepalived':0,'maintenance':0})
+        item['samples']+=1
+        if maintenance:
+            item['maintenance']+=1
+        else:
+            item['monitored']+=1
+            item['online']+=1 if online else 0
+            item['keepalived']+=1 if keep else 0
+    out=[]
+    for name,buckets in sorted(grouped.items()):
+        points=[]
+        for ts,v in sorted(buckets.items()):
+            monitored=v['monitored']
+            points.append({'ts':ts,'samples':v['samples'],'monitored_samples':monitored,'maintenance_samples':v['maintenance'],
+                           'availability':round(v['online']/monitored*100,3) if monitored else None,
+                           'keepalived_availability':round(v['keepalived']/monitored*100,3) if monitored else None})
+        out.append({'name':name,'points':points})
+    return out
+
+
+def _vrrp_series(since,bucket_minutes):
+    with sqlite3.connect(_core.DB) as c:
+        rows=c.execute('SELECT name,ts,master,healthy FROM statistics_vrrp_samples WHERE ts>=? ORDER BY name,ts',(since,)).fetchall()
+    grouped={}
+    for name,ts,master,healthy in rows:
+        bucket=_bucket_start(_parse_ts(ts),bucket_minutes).isoformat(timespec='minutes')
+        item=grouped.setdefault(name,{}).setdefault(bucket,{'samples':0,'healthy':0,'last_master':None})
+        item['samples']+=1
+        item['healthy']+=1 if healthy else 0
+        item['last_master']=master
+    out=[]
+    for name,buckets in sorted(grouped.items()):
+        points=[]
+        for ts,v in sorted(buckets.items()):
+            points.append({'ts':ts,'samples':v['samples'],'healthy_percent':round(v['healthy']/v['samples']*100,3) if v['samples'] else None,'master':v['last_master']})
+        out.append({'name':name,'points':points})
+    return out
+
+
 def init_statistics(core):
     global _core,_started
     _core=core
@@ -124,10 +188,13 @@ def init_statistics(core):
 def statistics_api():
     if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
     window=request.args.get('window','24h')
-    if window not in {'24h','7d','30d'}:return jsonify({'ok':False,'error':'Ungültiges Zeitfenster'}),400
-    hours=_window_hours(window);since_dt=_now()-timedelta(hours=hours);since=since_dt.isoformat(timespec='minutes')
+    if window not in WINDOWS:return jsonify({'ok':False,'error':'Ungültiges Zeitfenster'}),400
+    cfg=_window_config(window);hours=cfg['hours'];bucket_minutes=cfg['bucket_minutes']
+    since_dt=_now()-timedelta(hours=hours);since=since_dt.isoformat(timespec='minutes')
     with sqlite3.connect(_core.DB) as c:
         first_node=(c.execute('SELECT MIN(ts) FROM statistics_samples WHERE ts>=?',(since,)).fetchone() or [None])[0]
         first_vrrp=(c.execute('SELECT MIN(ts) FROM statistics_vrrp_samples WHERE ts>=?',(since,)).fetchone() or [None])[0]
     first=min([x for x in (first_node,first_vrrp) if x],default=None)
-    return jsonify({'window':window,'hours':hours,'since':since,'first_sample':first,'sample_interval_seconds':SAMPLE_INTERVAL,'nodes':_node_stats(since),'vrrp':_vrrp_stats(since)})
+    return jsonify({'window':window,'hours':hours,'since':since,'first_sample':first,'sample_interval_seconds':SAMPLE_INTERVAL,
+                    'bucket_minutes':bucket_minutes,'nodes':_node_stats(since),'vrrp':_vrrp_stats(since),
+                    'series':{'nodes':_node_series(since,bucket_minutes),'vrrp':_vrrp_series(since,bucket_minutes)}})
