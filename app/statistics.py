@@ -83,10 +83,6 @@ def _window_config(value):
     return WINDOWS.get(value,WINDOWS['24h'])
 
 
-def _window_hours(value):
-    return _window_config(value)['hours']
-
-
 def _parse_ts(value):
     return datetime.fromisoformat(value)
 
@@ -120,13 +116,25 @@ def _vrrp_stats(since):
     for name,ts,master,healthy in rows:grouped.setdefault(name,[]).append((ts,master,bool(healthy)))
     out=[]
     for name,samples in grouped.items():
-        healthy=sum(1 for _,_,ok in samples if ok);failovers=0;previous=None
-        for _,master,ok in samples:
-            if ok and master and master not in {'NONE','MULTIPLE'}:
-                if previous is not None and master!=previous:failovers+=1
-                previous=master
-        out.append({'name':name,'samples':len(samples),'healthy_percent':round(healthy/len(samples)*100,3) if samples else None,'failovers':failovers,'current_master':samples[-1][1] if samples else None})
+        healthy=sum(1 for _,_,ok in samples if ok)
+        out.append({'name':name,'samples':len(samples),'healthy_percent':round(healthy/len(samples)*100,3) if samples else None,
+                    'failovers':0,'current_master':samples[-1][1] if samples else None})
     return out
+
+
+def _failover_events(since):
+    with sqlite3.connect(_core.DB) as c:
+        rows=c.execute('''SELECT id,ts,name,old_master,new_master FROM events
+                          WHERE ts>=? ORDER BY ts DESC,id DESC''',(since,)).fetchall()
+    out=[]
+    counts={}
+    for event_id,ts,name,old_master,new_master in rows:
+        if new_master=='NONE':kind='LOST'
+        elif old_master=='NONE':kind='RECOVERED'
+        else:kind='FAILOVER'
+        if kind=='FAILOVER':counts[name]=counts.get(name,0)+1
+        out.append({'id':event_id,'ts':ts,'name':name,'old_master':old_master,'new_master':new_master,'type':kind})
+    return out,counts
 
 
 def _node_series(since,bucket_minutes):
@@ -201,6 +209,9 @@ def statistics_api():
         first_node=(c.execute('SELECT MIN(ts) FROM statistics_samples WHERE ts>=?',(since,)).fetchone() or [None])[0]
         first_vrrp=(c.execute('SELECT MIN(ts) FROM statistics_vrrp_samples WHERE ts>=?',(since,)).fetchone() or [None])[0]
     first=min([x for x in (first_node,first_vrrp) if x],default=None)
+    failover_events,failover_counts=_failover_events(since)
+    vrrp_stats=_vrrp_stats(since)
+    for item in vrrp_stats:item['failovers']=failover_counts.get(item['name'],0)
     return jsonify({'window':window,'hours':hours,'since':since,'first_sample':first,'sample_interval_seconds':SAMPLE_INTERVAL,
-                    'bucket_minutes':bucket_minutes,'nodes':_node_stats(since),'vrrp':_vrrp_stats(since),
+                    'bucket_minutes':bucket_minutes,'nodes':_node_stats(since),'vrrp':vrrp_stats,'failover_events':failover_events,
                     'series':{'nodes':_node_series(since,bucket_minutes),'vrrp':_vrrp_series(since,bucket_minutes)}})
