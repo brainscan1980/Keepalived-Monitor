@@ -15,7 +15,15 @@ def cfg():
     with open(CONFIG_FILE,encoding='utf-8') as f:return yaml.safe_load(f) or {}
 def db_init():
     os.makedirs(os.path.dirname(DB),exist_ok=True)
-    with sqlite3.connect(DB) as c:c.execute('CREATE TABLE IF NOT EXISTS state (name TEXT PRIMARY KEY, master TEXT)');c.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, name TEXT, old_master TEXT, new_master TEXT)');c.execute('CREATE TABLE IF NOT EXISTS node_alert_state (name TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, is_down INTEGER NOT NULL DEFAULT 0, down_since TEXT, last_alert TEXT, last_recovery TEXT)')
+    with sqlite3.connect(DB) as c:
+        c.execute('CREATE TABLE IF NOT EXISTS state (name TEXT PRIMARY KEY, master TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, name TEXT, old_master TEXT, new_master TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS node_alert_state (name TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, is_down INTEGER NOT NULL DEFAULT 0, down_since TEXT, last_alert TEXT, last_recovery TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS notification_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, type TEXT NOT NULL, node TEXT, ok INTEGER NOT NULL, error TEXT)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_notification_history_id ON notification_history(id DESC)')
+def record_notification(kind,node,ok,error=None,ts=None):
+    safe_error=str(error or '').strip()[:500] or None
+    with sqlite3.connect(DB) as c:c.execute('INSERT INTO notification_history(ts,type,node,ok,error) VALUES(?,?,?,?,?)',(ts or datetime.now().isoformat(timespec='seconds'),kind,node,1 if ok else 0,safe_error))
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
 def env_bool(n,d=False):return os.getenv(n,str(d)).lower() in {'1','true','yes','on'}
 def defaults():
@@ -116,16 +124,22 @@ def process_node_notifications(nodes):
                 if node['online']:
                     if is_down:
                         if mail_enabled() and st['recovery_mail']:
-                            try:send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}')
-                            except Exception as e:print(f'mail recovery error {name}: {e}',flush=True);continue
+                            try:
+                                send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}')
+                                record_notification('RECOVERY',name,True,ts=now)
+                            except Exception as e:
+                                record_notification('RECOVERY',name,False,e,now);print(f'mail recovery error {name}: {e}',flush=True);continue
                         c.execute('UPDATE node_alert_state SET failures=0,is_down=0,down_since=NULL,last_recovery=? WHERE name=?',(now,name))
                     elif failures:c.execute('UPDATE node_alert_state SET failures=0 WHERE name=?',(name,))
                 else:
                     failures+=1
                     if not is_down and failures>=st['failures_before_alert']:
                         if mail_enabled():
-                            try:send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}')
-                            except Exception as e:print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
+                            try:
+                                send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}')
+                                record_notification('NODE DOWN',name,True,ts=now)
+                            except Exception as e:
+                                record_notification('NODE DOWN',name,False,e,now);print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
                         c.execute('UPDATE node_alert_state SET failures=?,is_down=1,down_since=?,last_alert=? WHERE name=?',(failures,now,now,name))
                     else:c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name))
 def poll_node(node):
@@ -219,8 +233,18 @@ def update_settings():
 def test_notification():
     if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
     now=datetime.now().isoformat(timespec='seconds')
-    try:send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.');s=load_settings();s['last_test']=now;s['last_test_ok']=True;save_settings(s);return jsonify({'ok':True})
-    except Exception as e:s=load_settings();s['last_test']=now;s['last_test_ok']=False;save_settings(s);return jsonify({'ok':False,'error':str(e)}),502
+    try:
+        send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.')
+        record_notification('TEST',None,True,ts=now);s=load_settings();s['last_test']=now;s['last_test_ok']=True;save_settings(s);return jsonify({'ok':True})
+    except Exception as e:
+        record_notification('TEST',None,False,e,now);s=load_settings();s['last_test']=now;s['last_test_ok']=False;save_settings(s);return jsonify({'ok':False,'error':str(e)}),502
+@app.get('/api/notifications/history')
+@login_required
+def notification_history():
+    try:limit=max(1,min(100,int(request.args.get('limit',50))))
+    except ValueError:limit=50
+    with sqlite3.connect(DB) as c:r=c.execute('SELECT ts,type,node,ok,error FROM notification_history ORDER BY id DESC LIMIT ?',(limit,)).fetchall()
+    return jsonify([{'ts':x[0],'type':x[1],'node':x[2],'ok':bool(x[3]),'error':x[4]} for x in r])
 @app.route('/api/status')
 @login_required
 def status():
