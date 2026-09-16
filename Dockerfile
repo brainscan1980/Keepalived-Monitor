@@ -1,6 +1,16 @@
 FROM python:3.13-alpine
 WORKDIR /app
-RUN apk add --no-cache openssh-client && pip install --no-cache-dir flask pyyaml gunicorn cryptography
+RUN apk add --no-cache openssh-client \
+    && pip install --no-cache-dir flask pyyaml gunicorn cryptography \
+    && mkdir -p /etc/ssh/ssh_config.d \
+    && printf '%s\n' \
+       'Host *' \
+       '    ControlMaster auto' \
+       '    ControlPersist 60' \
+       '    ControlPath /tmp/keepalived-monitor-ssh-%C' \
+       '    ServerAliveInterval 30' \
+       '    ServerAliveCountMax 2' \
+       > /etc/ssh/ssh_config.d/keepalived-monitor.conf
 COPY app /app
 COPY VERSION /app/static/VERSION
 RUN mkdir -p /app/data
