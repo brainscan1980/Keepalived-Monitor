@@ -1,6 +1,6 @@
-import sqlite3, threading, time
+import math, sqlite3, threading, time
 from datetime import datetime
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 
 bp=Blueprint('eventlog',__name__)
 _core=None
@@ -34,6 +34,20 @@ def _watch():
         except Exception as e:print('event watcher error',e,flush=True)
         time.sleep(2)
 
+def _auth():return bool(_core.session.get('authenticated'))
+def _csrf():return _core.csrf_ok()
+
+def _all_events():
+    with sqlite3.connect(_core.DB) as c:
+        sys=c.execute('SELECT id,ts,category,subject,event_type,detail FROM system_events').fetchall()
+        fail=c.execute('SELECT id,ts,name,old_master,new_master FROM events').fetchall()
+    out=[{'key':f's-{r[0]}','ts':r[1],'category':r[2],'subject':r[3],'type':r[4],'detail':r[5]} for r in sys]
+    for event_id,ts,name,old,new in fail:
+        typ='VRRP LOST' if new=='NONE' else ('VRRP RECOVERED' if old=='NONE' else 'FAILOVER')
+        out.append({'key':f'v-{event_id}','ts':ts,'category':'VRRP','subject':name,'type':typ,'detail':f'{old} → {new}'})
+    out.sort(key=lambda x:(x['ts'],x['key']),reverse=True)
+    return out
+
 def init_eventlog(core):
     global _core,_started
     _core=core;_init_db()
@@ -41,18 +55,40 @@ def init_eventlog(core):
     if not _started:
         _started=True;threading.Thread(target=_watch,daemon=True).start()
 
+@bp.get('/events')
+def events_page():
+    if not _auth():return _core.redirect(_core.url_for('login',next=request.path))
+    return render_template('events.html',nodes=_core.cfg().get('nodes',[]),csrf=_core.session['csrf'])
+
 @bp.get('/api/events')
 def events():
-    if not _core.session.get('authenticated'):return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
-    try:limit=max(1,min(200,int(request.args.get('limit',50))))
-    except ValueError:limit=50
+    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
+    try:limit=max(1,min(200,int(request.args.get('limit',10))))
+    except ValueError:limit=10
+    return jsonify(_all_events()[:limit])
+
+@bp.get('/api/events/page')
+def events_page_api():
+    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
+    try:per_page=int(request.args.get('per_page',20));page=max(1,int(request.args.get('page',1)))
+    except ValueError:per_page,page=20,1
+    if per_page not in {10,20,50,100}:per_page=20
+    items=_all_events();total=len(items);pages=max(1,math.ceil(total/per_page));page=min(page,pages);start=(page-1)*per_page
+    return jsonify({'items':items[start:start+per_page],'page':page,'per_page':per_page,'total':total,'pages':pages})
+
+@bp.post('/api/events/clear')
+def clear_events():
+    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
+    if not _csrf():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
     with sqlite3.connect(_core.DB) as c:
-        sys=c.execute('SELECT ts,category,subject,event_type,detail FROM system_events ORDER BY id DESC LIMIT ?',(limit,)).fetchall()
-        fail=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT ?',(limit,)).fetchall()
-    out=[{'ts':r[0],'category':r[1],'subject':r[2],'type':r[3],'detail':r[4]} for r in sys]
-    for ts,name,old,new in fail:
-        typ='VRRP LOST' if new=='NONE' else ('VRRP RECOVERED' if old=='NONE' else 'FAILOVER')
-        detail=f'{old} → {new}'
-        out.append({'ts':ts,'category':'VRRP','subject':name,'type':typ,'detail':detail})
-    out.sort(key=lambda x:x['ts'],reverse=True)
-    return jsonify(out[:limit])
+        c.execute('DELETE FROM system_events');c.execute('DELETE FROM events')
+    return jsonify({'ok':True})
+
+@bp.post('/api/availability/reset')
+def reset_availability():
+    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
+    if not _csrf():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
+    with _core.availability_lock,sqlite3.connect(_core.DB) as c:c.execute('DELETE FROM availability_state')
+    try:_core.poll()
+    except Exception:pass
+    return jsonify({'ok':True})
