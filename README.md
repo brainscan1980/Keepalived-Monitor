@@ -1,26 +1,44 @@
 # 🛡️ Keepalived Monitor
 
-> Ein modernes, schlankes Webinterface zur zentralen Überwachung und Verwaltung von **Keepalived-/VRRP-Clustern**.
+> Modernes, schlankes Webinterface zur zentralen Überwachung, Diagnose und Verwaltung von **Keepalived-/VRRP-Clustern**.
 
-Keepalived Monitor überwacht mehrere Linux-Nodes per SSH, erkennt den aktuellen Besitzer einer virtuellen IP (VIP), protokolliert Failover-Ereignisse und stellt Verfügbarkeit, Wartungszustände und Keepalived-Logs übersichtlich in einer responsiven Weboberfläche dar.
+Keepalived Monitor überwacht Linux-Nodes agentenlos per SSH, erkennt MASTER und BACKUP-Zustände anhand der konfigurierten virtuellen IPs (VIPs), protokolliert Failover-Ereignisse und stellt Verfügbarkeit, historische Statistiken, Live-Logs und HA-Diagnosen in einer responsiven Weboberfläche bereit.
 
-Das Projekt eignet sich besonders für Homelabs und kleinere HA-Umgebungen, in denen Dienste wie DNS, Reverse Proxy oder Vaultwarden über Keepalived/VRRP hochverfügbar bereitgestellt werden.
+Das Projekt richtet sich besonders an Homelabs und kleinere HA-Umgebungen, in denen beispielsweise DNS, Reverse Proxies, Vaultwarden, Webserver oder andere Dienste mit Keepalived/VRRP hochverfügbar betrieben werden.
 
 ---
 
-## ✨ Funktionen
+## ✨ Funktionsumfang
 
-### 🖥️ Zentrales Dashboard
+### 🖥️ Dashboard und Clusterstatus
 
 - Übersicht aller konfigurierten Nodes
-- Erreichbarkeitsstatus jedes Nodes
-- Status des Keepalived-Dienstes
-- Uptime der Nodes
+- Erreichbarkeitsstatus und Keepalived-Status
+- Node-Uptime
 - Übersicht aller VRRP-Instanzen und VIPs
-- Automatische Erkennung des aktuellen MASTER-Nodes
+- automatische Erkennung des aktuellen MASTER-Nodes
 - Erkennung von fehlendem MASTER und mehreren gleichzeitigen MASTERs
-- Responsive Oberfläche für Desktop, Tablet und Smartphone
+- zentraler Cluster-Gesamtstatus
+- klickbare Node-Karten mit Detailansicht
+- responsive Oberfläche für Desktop, Tablet und Smartphone
 - Light- und Dark-Mode
+
+### 🧪 HA-/Cluster-Diagnose
+
+Die integrierte Diagnose-Engine bewertet jede konfigurierte VRRP-Instanz und erkennt typische HA-Probleme:
+
+- genau ein MASTER vorhanden
+- kein MASTER vorhanden
+- mehrere MASTER / Split-Brain
+- unbekannte konfigurierte Nodes
+- nicht erreichbare Nodes
+- inaktiver Keepalived-Dienst
+- verfügbare BACKUP-Nodes
+- fehlende Backup-Kapazität
+- fehlende Redundanz
+- Wartungsmodus eines Cluster-Mitglieds
+
+Die Diagnose liefert die Zustände **OK**, **WARNING**, **ERROR** und **UNKNOWN** und zeigt die Ergebnisse direkt im Dashboard an.
 
 ### ❤️ Verfügbarkeitsüberwachung
 
@@ -32,11 +50,23 @@ Für jeden Node werden dauerhaft Verfügbarkeitsdaten erfasst:
 - Anzahl erkannter Ausfälle
 - aktueller Ausfallzustand
 
-Die Daten bleiben über Container-Neustarts hinweg erhalten. Die Verfügbarkeitsstatistik kann bei Bedarf über die Einstellungen gezielt zurückgesetzt werden.
+Die Daten bleiben über Container-Neustarts hinweg erhalten. Geplante Wartung wird getrennt behandelt und fließt nicht als regulärer Ausfall in die Verfügbarkeitsberechnung ein. Die Verfügbarkeitsdaten können gezielt zurückgesetzt werden.
+
+### 📊 Historische Statistiken
+
+Eine eigene Statistikseite zeichnet Node- und VRRP-Zustände fortlaufend auf und stellt sie grafisch dar.
+
+Verfügbare Zeitfenster:
+
+- **24 Stunden**
+- **7 Tage**
+- **30 Tage**
+
+Erfasst werden unter anderem Node-Verfügbarkeit, Keepalived-Verfügbarkeit, Wartungszeiten, VRRP-Gesundheit und MASTER-Zustände. Die Messwerte werden minütlich erfasst und bis zu 32 Tage vorgehalten. Historische Statistikdaten können über die Oberfläche zurückgesetzt werden.
 
 ### 🔄 VRRP- und Failover-Monitoring
 
-Keepalived Monitor prüft, auf welchem Node sich die konfigurierte VIP befindet und erkennt dadurch automatisch MASTER-Wechsel.
+Keepalived Monitor prüft regelmäßig, welcher Node die konfigurierte VIP besitzt. MASTER-Wechsel, Verlust einer VIP und Wiederherstellungen werden erkannt und protokolliert.
 
 Damit lassen sich beispielsweise folgende HA-Dienste überwachen:
 
@@ -45,56 +75,47 @@ Damit lassen sich beispielsweise folgende HA-Dienste überwachen:
 - Vaultwarden
 - Webserver
 - Load Balancer
-- beliebige weitere Dienste mit Keepalived/VRRP
+- weitere Dienste mit Keepalived/VRRP
 
-MASTER-Wechsel werden in der Ereignis-Historie protokolliert.
+### 🧪 Automatisierter Failover-Test
 
-### 🧪 HA-/Cluster-Diagnose (v1.6 Entwicklung)
+Ein kontrollierter Failover-Test kann direkt über die Weboberfläche vorbereitet und ausgeführt werden.
 
-Die neue Diagnose-Engine von v1.6 überprüft VRRP-Instanzen zusätzlich auf typische HA-Probleme, unter anderem:
+Vor der Ausführung erfolgt ein Preflight-Check. Das Ergebnis wird strukturiert dargestellt, damit erkennbar ist, ob die Voraussetzungen für den Test erfüllt sind. Nach der Aktion wird der tatsächliche VRRP-/VIP-Zustand erneut geprüft und das Ergebnis des Failovers angezeigt.
 
-- genau ein MASTER vorhanden
-- kein MASTER vorhanden
-- mehrere MASTER / Split-Brain
-- Erreichbarkeit aller beteiligten Nodes
-- aktiver Keepalived-Dienst
-- verfügbare BACKUP-Nodes
-- fehlende Redundanz
-- unbekannte konfigurierte Nodes
-- Wartungsmodus eines Cluster-Mitglieds
+### 🛡️ Sichere Node-Aktionen
 
-Die Diagnose führt **keine automatischen Failover- oder Service-Aktionen** aus. Sie dient ausschließlich der Überwachung und Fehlerdiagnose.
+Keepalived kann aus der Node-Ansicht heraus gestartet, gestoppt und neu gestartet werden. Vor kritischen Aktionen werden zusätzliche Prüfungen durchgeführt, um den aktuellen Clusterzustand und mögliche Auswirkungen auf die Redundanz zu berücksichtigen.
+
+Nach relevanten Aktionen kann die Anwendung den resultierenden VRRP-Zustand verifizieren und anzeigen, ob der erwartete MASTER-/VIP-Wechsel tatsächlich stattgefunden hat.
+
+> ⚠️ Administrative Keepalived-Aktionen können unmittelbar einen VRRP-Failover auslösen. Sie sollten nur von autorisierten Administratoren verwendet werden.
 
 ### 📜 Live-Logs
 
-Die Node-Detailansicht kann die aktuellen Keepalived-Journal-Logs direkt anzeigen.
+Die Node-Detailansicht zeigt die aktuellen Keepalived-Journal-Logs direkt aus `journalctl` an.
 
 Enthalten sind:
 
-- automatische Aktualisierung
-- Aktualisierung alle 2 Sekunden
+- automatische Aktualisierung alle 2 Sekunden
 - Pause / Fortsetzen
 - manuelle Aktualisierung
-- 50 / 100 / 250 / 500 Logzeilen
+- Auswahl von 50 / 100 / 250 / 500 Logzeilen
 - Auto-Scroll
 - Kopieren in die Zwischenablage
-- saubere Fehleranzeige
-
-Die Logs werden per `journalctl` direkt vom jeweiligen Node abgefragt.
-
-### 🛠️ Keepalived-Steuerung
-
-Keepalived kann aus der Node-Ansicht heraus verwaltet werden. Je nach Konfiguration und SSH-Berechtigungen stehen Aktionen wie Start, Stop und Neustart zur Verfügung.
-
-> ⚠️ Das Stoppen oder Neustarten von Keepalived kann unmittelbar einen VRRP-Failover auslösen. Diese Funktionen sollten daher nur von autorisierten Administratoren verwendet werden.
+- Fehleranzeige bei nicht erreichbaren Nodes oder fehlgeschlagenen Log-Abfragen
 
 ### 🔧 Wartungsmodus
 
-Nodes können in einen Wartungsmodus versetzt werden. Geplante Wartungsarbeiten werden dadurch von der normalen Verfügbarkeitsberechnung getrennt behandelt und erzeugen keine regulären Node-Down-/Recovery-Benachrichtigungen.
+Nodes können gezielt in den Wartungsmodus versetzt werden. Während geplanter Wartung:
+
+- wird die Downtime nicht als regulärer Verfügbarkeitsausfall gewertet
+- werden normale Node-Down-/Recovery-Benachrichtigungen unterdrückt
+- berücksichtigt die HA-Diagnose den Wartungszustand des Nodes
 
 ### 🔔 E-Mail-Benachrichtigungen
 
-Optional können Benachrichtigungen per SMTP versendet werden, beispielsweise bei:
+Optional können SMTP-Benachrichtigungen versendet werden, beispielsweise bei:
 
 - Node-Ausfall
 - Wiederherstellung eines Nodes
@@ -103,19 +124,52 @@ Die Anzahl fehlgeschlagener Prüfungen vor einer Benachrichtigung ist konfigurie
 
 ### 🕓 Ereignis-Historie
 
-Keepalived Monitor protokolliert relevante Cluster-Ereignisse. Das Dashboard zeigt die neuesten Ereignisse; eine eigene Ereignisseite bietet eine paginierte Historie mit 10, 20, 50 oder 100 Einträgen pro Seite.
+Relevante VRRP- und Cluster-Ereignisse werden persistent gespeichert. Das Dashboard zeigt die neuesten Ereignisse; eine eigene Ereignisseite bietet eine paginierte Historie mit 10, 20, 50 oder 100 Einträgen pro Seite.
 
-Einträge können gezielt gelöscht werden, ohne interne Failover-Zähler zu zerstören.
+Historieneinträge können gelöscht werden, ohne die internen VRRP-Failover-Zähler zu zerstören.
+
+### 📦 Konfigurations-Export, Import und Backups
+
+Die Anwendung besitzt Funktionen zur Verwaltung der Monitor-Konfiguration:
+
+- Konfiguration exportieren
+- Konfiguration importieren
+- Import vor der Übernahme prüfen
+- Änderungen bestätigen
+- automatische bzw. verwaltete Konfigurations-Backups
+- vorhandene Backups auflisten
+- Backup wiederherstellen
+- Backup löschen
+
+Lokale produktive Konfigurationen und automatisch erzeugte `config.yml.backup-*`-Dateien werden nicht im Git-Repository versioniert.
+
+### 🧾 Audit-Log
+
+Administrative Aktionen werden in einem eigenen Audit-Log nachvollziehbar protokolliert. Dazu gehören unter anderem:
+
+- Keepalived-Node-Aktionen
+- Wartungsmodus-Änderungen
+- automatisierte Failover-Tests
+- Konfigurations- und Backup-Aktionen
+- Statistik-, Ereignis- und Verfügbarkeits-Resets
+- Änderungen an Anwendungseinstellungen
+
+Sensible Zugangsdaten und Secrets werden dabei nicht als Klartext in das Audit-Log geschrieben. Für die Anzeige existiert eine eigene Audit-Seite in der Navigation.
 
 ### 🔐 Anmeldung und Sicherheit
 
 - geschützter Web-Login
 - Benutzername und Passwort über `.env`
 - eigener Flask Session Secret Key
+- CSRF-Schutz für schreibende Aktionen
 - Secure-Cookie-Unterstützung für HTTPS
 - SSH-Key read-only im Container
 - keine Passwörter in `config.yml`
-- `.env` und private SSH-Dateien gehören nicht ins Git-Repository
+- `.env`, private SSH-Dateien, produktive `config.yml` und Config-Backups werden von Git ausgeschlossen
+
+### ⚡ SSH- und Ressourcenoptimierung
+
+Der Container verwendet OpenSSH-Verbindungsmultiplexing (`ControlMaster` / `ControlPersist`), sodass wiederkehrende Monitoring-Abfragen bestehende SSH-Verbindungen wiederverwenden können. Dadurch wird insbesondere bei kurzen Polling-Intervallen die CPU-Last durch wiederholte SSH-Handshakes deutlich reduziert.
 
 ---
 
@@ -123,13 +177,14 @@ Einträge können gezielt gelöscht werden, ohne interne Failover-Zähler zu zer
 
 ```text
                          ┌─────────────────────────┐
-                         │     Web Browser         │
+                         │       Web Browser       │
                          └────────────┬────────────┘
                                       │ HTTP / HTTPS
                                       ▼
                          ┌─────────────────────────┐
                          │   Keepalived Monitor    │
-                         │   Flask + Docker        │
+                         │   Flask + Gunicorn      │
+                         │       in Docker         │
                          └────────────┬────────────┘
                                       │ SSH
                    ┌──────────────────┼──────────────────┐
@@ -144,7 +199,7 @@ Einträge können gezielt gelöscht werden, ohne interne Failover-Zähler zu zer
                               Virtuelle IP (VIP)
 ```
 
-Der Monitor benötigt keinen Agenten auf den Ziel-Nodes. Statusinformationen werden per SSH mit Standard-Linux-Werkzeugen abgefragt.
+Auf den Ziel-Nodes ist **kein zusätzlicher Agent** erforderlich. Statusinformationen und administrative Aktionen werden per SSH mit Standard-Linux-Werkzeugen ausgeführt.
 
 ---
 
@@ -163,10 +218,11 @@ Der Monitor benötigt keinen Agenten auf den Ziel-Nodes. Statusinformationen wer
 - Linux
 - Keepalived
 - systemd
-- SSH-Zugriff vom Docker-Host bzw. Monitor-Container
+- SSH-Zugriff vom Monitor-Container
 - `ip`
 - `uptime`
-- `journalctl` für die Live-Logs
+- `journalctl` für Live-Logs
+- passende Berechtigungen für administrative Keepalived-Aktionen, sofern diese verwendet werden sollen
 
 ---
 
@@ -177,35 +233,15 @@ Der Monitor benötigt keinen Agenten auf den Ziel-Nodes. Statusinformationen wer
 ```bash
 git clone https://github.com/brainscan1980/Keepalived-Monitor.git
 cd Keepalived-Monitor
-```
-
-Für die stabile Version sollte normalerweise der `main`-Branch verwendet werden.
-
-```bash
 git switch main
 ```
 
-Die Entwicklung von v1.6 findet auf `develop-v1.6.0` statt:
-
-```bash
-git switch develop-v1.6.0
-```
-
-> ⚠️ Entwicklungsbranches können unfertige oder noch nicht vollständig integrierte Funktionen enthalten.
-
----
+Der `main`-Branch enthält den stabilen bzw. aktuell zusammengeführten Projektstand. Entwicklungsbranches können unfertige Funktionen enthalten und sollten nicht für produktive Installationen verwendet werden.
 
 ## 2. Konfigurationsdatei erstellen
 
-Die Beispielkonfiguration kopieren:
-
 ```bash
 cp config/config.example.yml config/config.yml
-```
-
-Anschließend bearbeiten:
-
-```bash
 nano config/config.yml
 ```
 
@@ -259,29 +295,18 @@ vrrp:
 | `nodes[].name` | eindeutiger Anzeigename des Nodes |
 | `nodes[].host` | IP-Adresse oder Hostname |
 | `nodes[].user` | SSH-Benutzer |
-| `vrrp[].name` | Name der VRRP-Instanz im Monitor |
+| `vrrp[].name` | Name der VRRP-Instanz |
 | `vrrp[].vip` | virtuelle IP-Adresse |
-| `vrrp[].nodes` | Nodes, die an dieser VRRP-Instanz teilnehmen |
-
----
+| `vrrp[].nodes` | teilnehmende Nodes |
 
 ## 3. SSH-Key einrichten
 
-Im Projektverzeichnis:
-
 ```bash
 mkdir -p ssh
-```
-
-Einen vorhandenen privaten SSH-Key nach `ssh/id_ed25519` kopieren oder einen eigenen Key für den Monitor erzeugen.
-
-Beispiel:
-
-```bash
 ssh-keygen -t ed25519 -f ssh/id_ed25519
 ```
 
-Den Public Key auf jedem Ziel-Node autorisieren, beispielsweise:
+Public Key auf den Ziel-Nodes autorisieren, zum Beispiel:
 
 ```bash
 ssh-copy-id -i ssh/id_ed25519.pub root@192.168.1.10
@@ -293,11 +318,6 @@ Known Hosts erzeugen:
 
 ```bash
 ssh-keyscan -H 192.168.1.10 192.168.1.11 192.168.1.12 > ssh/known_hosts
-```
-
-Dateirechte setzen:
-
-```bash
 chmod 600 ssh/id_ed25519
 chmod 644 ssh/known_hosts
 ```
@@ -310,25 +330,11 @@ ssh -i ssh/id_ed25519 root@192.168.1.10
 
 Der Login sollte ohne Passwortabfrage funktionieren.
 
----
-
 ## 4. Umgebungsvariablen konfigurieren
-
-Beispieldatei kopieren:
 
 ```bash
 cp .env.example .env
-```
-
-Secret Key erzeugen:
-
-```bash
 openssl rand -hex 32
-```
-
-Danach `.env` bearbeiten:
-
-```bash
 nano .env
 ```
 
@@ -341,15 +347,13 @@ SECRET_KEY=HIER-DEN-GENERIERTEN-SECRET-KEY-EINTRAGEN
 COOKIE_SECURE=false
 ```
 
-> 🔒 Die echte `.env` darf niemals in ein öffentliches Git-Repository eingecheckt werden.
+> 🔒 Die echte `.env` darf niemals in das Git-Repository eingecheckt werden.
 
-Wenn die Anwendung ausschließlich über HTTPS aufgerufen wird, sollte gesetzt werden:
+Bei ausschließlicher HTTPS-Nutzung:
 
 ```dotenv
 COOKIE_SECURE=true
 ```
-
----
 
 ## 5. Optional: E-Mail-Benachrichtigungen
 
@@ -372,35 +376,19 @@ Ohne E-Mail-Versand:
 MAIL_ENABLED=false
 ```
 
----
-
 ## 6. Container bauen und starten
 
 ```bash
 mkdir -p data
-docker compose build
-docker compose up -d
-```
-
-Oder kompakt:
-
-```bash
 docker compose up -d --build
 ```
 
-Status prüfen:
+Status und Logs:
 
 ```bash
 docker compose ps
-```
-
-Logs anzeigen:
-
-```bash
 docker compose logs -f keepalived-monitor
 ```
-
----
 
 ## 7. Webinterface öffnen
 
@@ -418,24 +406,17 @@ Danach mit den in `.env` hinterlegten Zugangsdaten anmelden.
 
 Vor einem Update empfiehlt sich ein Backup von `config`, `.env`, `ssh` und `data`.
 
-Anschließend:
-
 ```bash
-git pull
+git switch main
+git pull --ff-only origin main
 docker compose up -d --build
-```
-
-Containerstatus prüfen:
-
-```bash
-docker compose ps
 ```
 
 ---
 
 # 🧪 Tests
 
-Die isolierte HA-/Cluster-Diagnose von v1.6 besitzt Unit-Tests. Auf dem Entwicklungsbranch können sie mit folgendem Befehl ausgeführt werden:
+Für die isolierte HA-/Cluster-Diagnose existieren Unit-Tests:
 
 ```bash
 python3 -m unittest -v tests/test_cluster_validation.py
@@ -451,9 +432,7 @@ OK
 
 # 🌐 Reverse Proxy
 
-Keepalived Monitor kann problemlos hinter einem Reverse Proxy wie Caddy betrieben werden.
-
-Ein einfaches Caddy-Beispiel:
+Keepalived Monitor kann hinter einem Reverse Proxy wie Caddy betrieben werden.
 
 ```caddyfile
 keepalived.example.com {
@@ -461,33 +440,22 @@ keepalived.example.com {
 }
 ```
 
-Bei ausschließlicher HTTPS-Nutzung sollte in `.env` zusätzlich gesetzt werden:
-
-```dotenv
-COOKIE_SECURE=true
-```
-
-Für öffentlich erreichbare Installationen sind zusätzliche Schutzmaßnahmen wie Zugriffsbeschränkungen, VPN oder vorgeschaltete Authentifizierung empfehlenswert.
+Bei ausschließlicher HTTPS-Nutzung sollte `COOKIE_SECURE=true` gesetzt werden. Für öffentlich erreichbare Installationen sind zusätzliche Zugriffsbeschränkungen, VPN oder vorgeschaltete Authentifizierung empfehlenswert.
 
 ---
 
 # 🔐 Sicherheitshinweise
 
-Der Monitor besitzt administrativen Zugriff auf die überwachten Keepalived-Nodes. Entsprechend wichtig ist eine saubere Absicherung.
+Der Monitor kann administrativen Zugriff auf die überwachten Keepalived-Nodes besitzen. Empfohlen werden daher:
 
-Empfohlen:
-
-1. Einen **dedizierten SSH-Benutzer** für Keepalived Monitor verwenden.
-2. Root-SSH nach Möglichkeit vermeiden.
-3. Nur die tatsächlich benötigten `sudo`-Befehle erlauben.
-4. SSH ausschließlich per Key erlauben.
-5. Den privaten SSH-Key niemals ins Repository committen.
-6. `.env` niemals veröffentlichen.
-7. Das Webinterface über HTTPS betreiben.
-8. Bei Zugriff aus dem Internet zusätzliche Zugriffskontrollen verwenden.
-9. Regelmäßige Backups des `data`-Verzeichnisses erstellen.
-
-Der SSH-Key wird durch Docker read-only nach `/root/.ssh` in den Container eingebunden.
+1. ein dedizierter SSH-Benutzer für Keepalived Monitor,
+2. Root-SSH nach Möglichkeit vermeiden,
+3. nur die tatsächlich benötigten `sudo`-Befehle erlauben,
+4. SSH ausschließlich per Key verwenden,
+5. private SSH-Keys und `.env` niemals veröffentlichen,
+6. das Webinterface über HTTPS betreiben,
+7. bei Internetzugriff zusätzliche Zugriffskontrollen einsetzen,
+8. regelmäßige Backups des `data`-Verzeichnisses erstellen.
 
 ---
 
@@ -495,29 +463,37 @@ Der SSH-Key wird durch Docker read-only nach `/root/.ssh` in den Container einge
 
 ```text
 Keepalived-Monitor/
-├── app/                    # Flask-Anwendung
-│   ├── static/             # CSS / JavaScript
-│   ├── templates/          # HTML-Templates
-│   └── cluster_validation.py
+├── app/
+│   ├── app.py
+│   ├── audit_integration.py
+│   ├── audit_log.py
+│   ├── cluster_integration.py
+│   ├── cluster_validation.py
+│   ├── config_transfer.py
+│   ├── eventlog.py
+│   ├── failover_test.py
+│   ├── node_actions.py
+│   ├── statistics.py
+│   ├── static/
+│   └── templates/
 ├── config/
 │   └── config.example.yml
-├── data/                   # persistente Laufzeitdaten
-├── ssh/                    # SSH-Key und known_hosts
-├── tests/                  # Unit-Tests
+├── data/
+├── ssh/
+├── tests/
 ├── .env.example
+├── .gitignore
 ├── Dockerfile
 ├── docker-compose.yml
 ├── README.md
 └── VERSION
 ```
 
-Die produktiven Dateien `config/config.yml`, `.env`, private SSH-Keys und persistente Daten sollten lokal bleiben und nicht versehentlich veröffentlicht werden.
+Produktive Dateien wie `config/config.yml`, `config/config.yml.backup-*`, `.env`, private SSH-Keys und persistente Daten bleiben lokal und gehören nicht ins Repository.
 
 ---
 
 # 🐳 Docker-Volumes
-
-Der Compose-Stack bindet folgende Verzeichnisse ein:
 
 | Host | Container | Zweck |
 |---|---|---|
@@ -531,15 +507,8 @@ Der Compose-Stack bindet folgende Verzeichnisse ein:
 
 ### Node wird als offline angezeigt
 
-SSH-Verbindung vom Docker-Host testen:
-
 ```bash
 ssh -i ssh/id_ed25519 root@NODE-IP
-```
-
-Danach prüfen:
-
-```bash
 systemctl is-active keepalived
 ip -j addr show
 uptime -p
@@ -547,31 +516,23 @@ uptime -p
 
 ### SSH Host Key Verification failed
 
-`known_hosts` neu erzeugen bzw. den betroffenen Host aktualisieren:
-
 ```bash
 ssh-keyscan -H NODE-IP >> ssh/known_hosts
 ```
 
 ### Keepalived wird nicht als aktiv erkannt
 
-Auf dem Ziel-Node:
-
 ```bash
 systemctl status keepalived
 ```
 
-Der Dienst sollte als `active` gemeldet werden.
-
 ### VIP wird nicht erkannt
-
-Auf dem betreffenden Node prüfen:
 
 ```bash
 ip addr
 ```
 
-Die in `config/config.yml` konfigurierte VIP muss exakt mit der vom MASTER gehaltenen Adresse übereinstimmen.
+Die in `config/config.yml` konfigurierte VIP muss exakt mit der Adresse übereinstimmen, die der MASTER aktuell besitzt.
 
 ### Container startet nicht
 
@@ -584,46 +545,19 @@ Insbesondere prüfen, ob `ADMIN_USERNAME`, `ADMIN_PASSWORD` und `SECRET_KEY` in 
 
 ---
 
-# 🗺️ Entwicklung / Roadmap
+# 📌 Projektstatus
 
-Die aktuelle Entwicklung von **v1.6** konzentriert sich auf erweiterte Cluster-Diagnose und HA-Funktionen.
+Der aktuelle `main`-Branch enthält den zusammengeführten Funktionsstand einschließlich Live-Logs, historischer Statistiken, HA-/Cluster-Diagnose, sicherer Node-Aktionen, Konfigurationsverwaltung, automatisiertem Failover-Test, Audit-Log und SSH-Performance-Optimierung.
 
-Bereits umgesetzt bzw. in Entwicklung:
-
-- ✅ Live-Logs
-- 🚧 erweiterte HA-/Cluster-Prüfung
-- 📊 grafische Verfügbarkeitsstatistiken für 24 Stunden / 7 Tage / 30 Tage
-
-Für spätere Versionen vorgesehen:
-
-- sicherere bzw. erweiterte Node-Aktionen
-- Konfigurations-Export/-Import
-- automatisierter Failover-Test
-- erweitertes Audit-Logging
+Die Datei `VERSION` wird unabhängig von diesem README gepflegt. Die Planung der nächsten Entwicklungsstufe erfolgt separat, damit das README den **tatsächlich vorhandenen Funktionsumfang** dokumentiert und keine veraltete Roadmap enthält.
 
 ---
 
 # 🤝 Beiträge und Fehlerberichte
 
-Fehlerberichte, Verbesserungsvorschläge und Pull Requests sind willkommen.
-
-Bei einem Bug-Report sind folgende Informationen hilfreich:
-
-- verwendete Keepalived-Monitor-Version
-- Docker-/Compose-Version
-- Betriebssystem und Architektur
-- relevante Container-Logs
-- Schritte zum Reproduzieren des Problems
+Fehlerberichte, Verbesserungsvorschläge und Pull Requests sind willkommen. Hilfreich sind dabei die verwendete Keepalived-Monitor-Version, Docker-/Compose-Version, Betriebssystem und Architektur, relevante Container-Logs sowie reproduzierbare Schritte.
 
 Bitte niemals Passwörter, private SSH-Keys, Session-Secrets oder andere Zugangsdaten in Issues veröffentlichen.
-
----
-
-# 📌 Projektstatus
-
-Keepalived Monitor ist ein eigenständiges Homelab-/Administrationsprojekt und befindet sich in aktiver Entwicklung.
-
-Die Anwendung soll Keepalived-/VRRP-Umgebungen transparenter machen und Administratoren dabei unterstützen, MASTER-Zustände, Redundanz, Ausfälle und Failover-Ereignisse schnell zu erkennen – ohne auf jedem Node einzeln arbeiten zu müssen.
 
 ---
 
