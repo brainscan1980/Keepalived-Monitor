@@ -12,3 +12,7 @@ services:
     environment:
       - TZ=Europe/Berlin
       - CONFIG_FILE=/app/config/config.yml
+      - ADMIN_USERNAME=${ADMIN_USERNAME:?ADMIN_USERNAME muss in .env gesetzt sein}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD muss in .env gesetzt sein}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY muss in .env gesetzt sein}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
