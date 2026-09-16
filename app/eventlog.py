@@ -12,6 +12,7 @@ def _init_db():
     with sqlite3.connect(_core.DB) as c:
         c.execute('CREATE TABLE IF NOT EXISTS system_events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, category TEXT NOT NULL, subject TEXT NOT NULL, event_type TEXT NOT NULL, detail TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_system_events_id ON system_events(id DESC)')
+        c.execute('CREATE TABLE IF NOT EXISTS eventlog_meta (key TEXT PRIMARY KEY, value TEXT)')
 
 def _record(category,subject,event_type,detail=None):
     with sqlite3.connect(_core.DB) as c:c.execute('INSERT INTO system_events(ts,category,subject,event_type,detail) VALUES(?,?,?,?,?)',(_now(),category,subject,event_type,detail))
@@ -40,7 +41,8 @@ def _csrf():return _core.csrf_ok()
 def _all_events():
     with sqlite3.connect(_core.DB) as c:
         sys=c.execute('SELECT id,ts,category,subject,event_type,detail FROM system_events').fetchall()
-        fail=c.execute('SELECT id,ts,name,old_master,new_master FROM events').fetchall()
+        cutoff=(c.execute("SELECT value FROM eventlog_meta WHERE key='vrrp_cutoff'").fetchone() or [None])[0]
+        fail=c.execute('SELECT id,ts,name,old_master,new_master FROM events WHERE (? IS NULL OR ts>?)',(cutoff,cutoff)).fetchall()
     out=[{'key':f's-{r[0]}','ts':r[1],'category':r[2],'subject':r[3],'type':r[4],'detail':r[5]} for r in sys]
     for event_id,ts,name,old,new in fail:
         typ='VRRP LOST' if new=='NONE' else ('VRRP RECOVERED' if old=='NONE' else 'FAILOVER')
@@ -80,8 +82,10 @@ def events_page_api():
 def clear_events():
     if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
     if not _csrf():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
+    cutoff=_now()
     with sqlite3.connect(_core.DB) as c:
-        c.execute('DELETE FROM system_events');c.execute('DELETE FROM events')
+        c.execute('DELETE FROM system_events')
+        c.execute("INSERT INTO eventlog_meta(key,value) VALUES('vrrp_cutoff',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(cutoff,))
     return jsonify({'ok':True})
 
 @bp.post('/api/availability/reset')
