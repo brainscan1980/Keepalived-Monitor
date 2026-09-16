@@ -11,6 +11,10 @@ VERIFY_INTERVAL=2
 
 def _auth():return bool(_core.session.get('authenticated'))
 
+def _audit(action,target,result,details=None):
+    try:_core.write_audit(action,target,result,details)
+    except Exception:pass
+
 
 def _snapshot():
     with _core.lock:
@@ -54,8 +58,6 @@ def _verify_failover(name,action,affected):
             latest.append({'name':expected.get('name'),'vip':expected.get('vip'),'old_master':name,'new_master':master,'healthy':healthy,'moved':moved})
             if not moved:all_moved=False
         node=nodes.get(name) or {};service_recovered=node.get('online') and node.get('keepalived')=='active'
-        # For restart the failover may be brief. A recorded VRRP event is therefore
-        # also accepted if the original MASTER has already preempted back.
         if action=='restart' and not all_moved:
             try:
                 import sqlite3
@@ -84,21 +86,25 @@ def guarded_action(name,action):
     risk=None
     if action in {'stop','restart'}:
         risk=action_risk(name,action)
-        if not risk['allowed']:return jsonify({'ok':False,'status':'blocked','error':risk['reason'],'risk':risk}),409
+        if not risk['allowed']:
+            _audit(f'keepalived.{action}',name,'blocked',{'reason':risk['reason'],'risk':risk.get('level'),'instances':risk.get('master_instances',[])})
+            return jsonify({'ok':False,'status':'blocked','error':risk['reason'],'risk':risk}),409
         if risk['level']=='master' and request.headers.get('X-Confirm-Master-Action')!='yes':return jsonify({'ok':False,'status':'confirmation_required','error':'MASTER-Aktion muss ausdrücklich bestätigt werden.','risk':risk}),409
     response=_original_action(name,action)
-    if not risk or risk.get('level')!='master':return response
     flask_response,status=response if isinstance(response,tuple) else (response,200)
-    if status>=400:return response
     try:data=flask_response.get_json() or {}
-    except Exception:return response
-    if not data.get('ok'):return response
+    except Exception:data={}
+    if not risk or risk.get('level')!='master':
+        _audit(f'keepalived.{action}',name,'success' if status<400 and data.get('ok') else 'failed',{'status':data.get('status'),'error':data.get('error') or ''})
+        return response
+    if status>=400 or not data.get('ok'):
+        _audit(f'keepalived.{action}',name,'failed',{'status':data.get('status'),'error':data.get('error') or 'Keepalived-Aktion fehlgeschlagen.','instances':risk.get('master_instances',[])})
+        return response
     verification=_verify_failover(name,action,risk.get('affected') or [])
     data['verification']=verification
-    if verification['ok']:
-        data['message']='Failover erfolgreich verifiziert.'
-    else:
-        data['message']='Keepalived-Aktion wurde ausgeführt, die Failover-Nachkontrolle war jedoch nicht vollständig erfolgreich.'
+    if verification['ok']:data['message']='Failover erfolgreich verifiziert.'
+    else:data['message']='Keepalived-Aktion wurde ausgeführt, die Failover-Nachkontrolle war jedoch nicht vollständig erfolgreich.'
+    _audit(f'keepalived.{action}',name,'success' if verification['ok'] else 'warning',{'status':data.get('status'),'master_action':True,'instances':risk.get('master_instances',[]),'verification':verification})
     return jsonify(data),200
 
 
