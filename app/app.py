@@ -19,7 +19,7 @@ def db_init():
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
 def env_bool(n,d=False):return os.getenv(n,str(d)).lower() in {'1','true','yes','on'}
 def defaults():
-    n=(cfg().get('notifications',{}).get('node_down',{}) or {});return {'mail_enabled':env_bool('MAIL_ENABLED'),'node_down':bool(n.get('enabled',True)),'recovery_mail':bool(n.get('recovery_mail',True)),'failures_before_alert':max(1,int(n.get('failures_before_alert',3))),'smtp_host':os.getenv('SMTP_HOST',''),'smtp_port':int(os.getenv('SMTP_PORT','587')),'smtp_security':os.getenv('SMTP_SECURITY','starttls').lower(),'smtp_username':os.getenv('SMTP_USERNAME',''),'smtp_password_enc':'','mail_from':os.getenv('MAIL_FROM',''),'mail_to':os.getenv('MAIL_TO',''),'last_test':None,'last_test_ok':None}
+    n=(cfg().get('notifications',{}).get('node_down',{}) or {});return {'mail_enabled':env_bool('MAIL_ENABLED'),'node_down':bool(n.get('enabled',True)),'recovery_mail':bool(n.get('recovery_mail',True)),'failures_before_alert':max(1,int(n.get('failures_before_alert',3))),'smtp_host':os.getenv('SMTP_HOST',''),'smtp_port':int(os.getenv('SMTP_PORT','587')),'smtp_security':os.getenv('SMTP_SECURITY','starttls').lower(),'smtp_username':os.getenv('SMTP_USERNAME',''),'smtp_password_enc':'','mail_from':os.getenv('MAIL_FROM',''),'mail_to':os.getenv('MAIL_TO',''),'last_test':None,'last_test_ok':None,'maintenance_nodes':{}}
 def load_settings():
     s=defaults()
     with settings_lock:
@@ -27,19 +27,30 @@ def load_settings():
             with open(SETTINGS_FILE,encoding='utf-8') as f:s.update(json.load(f))
         except FileNotFoundError:pass
         except Exception as e:print('settings load error',e,flush=True)
+    if not isinstance(s.get('maintenance_nodes'),dict):s['maintenance_nodes']={}
     return s
 def save_settings(s):
     os.makedirs(os.path.dirname(SETTINGS_FILE),exist_ok=True);tmp=SETTINGS_FILE+'.tmp'
     with settings_lock:
         with open(tmp,'w',encoding='utf-8') as f:json.dump(s,f,ensure_ascii=False,indent=2)
         os.chmod(tmp,0o600);os.replace(tmp,SETTINGS_FILE);os.chmod(SETTINGS_FILE,0o600)
+def maintenance_info(name):
+    m=load_settings().get('maintenance_nodes',{}).get(name)
+    return {'active':bool(m),'since':m.get('since') if isinstance(m,dict) else None}
+def set_maintenance(name,active):
+    s=load_settings();m=s.setdefault('maintenance_nodes',{})
+    if active:m[name]={'since':datetime.now().isoformat(timespec='seconds')}
+    else:m.pop(name,None)
+    save_settings(s)
+    if active:
+        with sqlite3.connect(DB) as c:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,0,0) ON CONFLICT(name) DO UPDATE SET failures=0,is_down=0,down_since=NULL',(name,))
 def smtp_password(s):
     if s.get('smtp_password_enc'):
         try:return fernet().decrypt(s['smtp_password_enc'].encode()).decode()
         except InvalidToken:raise RuntimeError('SMTP-Passwort kann nicht entschlüsselt werden. Bitte neu eingeben.')
     return os.getenv('SMTP_PASSWORD','')
 def public_settings():
-    s=load_settings();return {k:v for k,v in s.items() if k!='smtp_password_enc'}|{'smtp_password_set':bool(s.get('smtp_password_enc') or os.getenv('SMTP_PASSWORD',''))}
+    s=load_settings();return {k:v for k,v in s.items() if k not in {'smtp_password_enc','maintenance_nodes'}}|{'smtp_password_set':bool(s.get('smtp_password_enc') or os.getenv('SMTP_PASSWORD',''))}
 def mail_enabled():return bool(load_settings().get('mail_enabled'))
 def send_mail(subject,body):
     s=load_settings()
@@ -86,15 +97,18 @@ def fmt_duration(start,end):
 def notification_cfg():
     s=load_settings();return {'enabled':bool(s.get('node_down',True)),'failures_before_alert':max(1,min(20,int(s.get('failures_before_alert',3)))),'recovery_mail':bool(s.get('recovery_mail',True))}
 def notification_status(name):
-    st=notification_cfg()
+    st=notification_cfg();maintenance=maintenance_info(name)
     with sqlite3.connect(DB) as c:r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
-    return {'enabled':mail_enabled() and st['enabled'],'failures':r[0] if r else 0,'is_down':bool(r[1]) if r else False,'down_since':r[2] if r else None,'last_alert':r[3] if r else None,'last_recovery':r[4] if r else None,'failures_before_alert':st['failures_before_alert']}
+    return {'enabled':mail_enabled() and st['enabled'] and not maintenance['active'],'suppressed':maintenance['active'],'failures':r[0] if r else 0,'is_down':bool(r[1]) if r else False,'down_since':r[2] if r else None,'last_alert':r[3] if r else None,'last_recovery':r[4] if r else None,'failures_before_alert':st['failures_before_alert']}
 def process_node_notifications(nodes):
     st=notification_cfg()
     if not st['enabled']:return
     now=datetime.now().isoformat(timespec='seconds')
     with notification_lock:
         for name,node in nodes.items():
+            if maintenance_info(name)['active']:
+                with sqlite3.connect(DB) as c:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,0,0) ON CONFLICT(name) DO UPDATE SET failures=0,is_down=0,down_since=NULL',(name,))
+                continue
             with sqlite3.connect(DB) as c:
                 r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
                 if r is None:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,?,?)',(name,0 if node['online'] else 1,0));continue
@@ -142,13 +156,16 @@ def cluster_health(nodes,vrrp):
         if not v['healthy']:critical.append(f"{v['name']}: {'mehrere MASTER erkannt' if v['master']=='MULTIPLE' else 'kein MASTER'}")
     if critical:return {'status':'CRITICAL','message':' · '.join(critical),'issues':critical}
     for n in nodes.values():
+        if n.get('maintenance',{}).get('active'):continue
         if not n['online']:degraded.append(f"{n['name']} ist offline")
         elif n['keepalived']!='active':degraded.append(f"Keepalived auf {n['name']} ist {n['keepalived']}")
     if degraded:return {'status':'DEGRADED','message':'Redundanz eingeschränkt: '+' · '.join(degraded),'issues':degraded}
     if nodes and vrrp:return {'status':'HEALTHY','message':'Cluster vollständig funktions- und failoverbereit','issues':[]}
     return {'status':'UNKNOWN','message':'Clusterzustand kann nicht bestimmt werden','issues':[]}
 def poll():
-    c=cfg();ns={n['name']:poll_node(n) for n in c.get('nodes',[])};process_node_notifications(ns)
+    c=cfg();ns={n['name']:poll_node(n) for n in c.get('nodes',[])}
+    for name in ns:ns[name]['maintenance']=maintenance_info(name)
+    process_node_notifications(ns)
     for name in ns:ns[name]['notification']=notification_status(name)
     vs=[]
     for v in c.get('vrrp',[]):
@@ -213,6 +230,15 @@ def status():
 def history():
     with sqlite3.connect(DB) as c:r=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT 50').fetchall()
     return jsonify([{'ts':x[0],'name':x[1],'old':x[2],'new':x[3],'type':'LOST' if x[3]=='NONE' else ('RECOVERED' if x[2]=='NONE' else 'FAILOVER')} for x in r])
+@app.post('/api/nodes/<name>/maintenance')
+@login_required
+def node_maintenance(name):
+    if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
+    if not node_by_name(name):return jsonify({'ok':False,'error':'Node nicht gefunden'}),404
+    d=request.get_json(silent=True) or {};active=bool(d.get('active'));set_maintenance(name,active)
+    try:poll()
+    except Exception:pass
+    return jsonify({'ok':True,'maintenance':maintenance_info(name)})
 @app.post('/api/nodes/<name>/keepalived/<action>')
 @login_required
 def keepalived_action(name,action):
