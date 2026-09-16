@@ -33,32 +33,23 @@ def record_availability(nodes):
             r=c.execute('SELECT started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state WHERE name=?',(name,)).fetchone()
             if r is None:
                 down=now_s if not online and not maintenance else None
-                c.execute('INSERT INTO availability_state(name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end) VALUES(?,?,?,?,?,0,0,?,?,?,?)',(name,now_s,now_s,online,maintenance,1 if down else 0,down,down,None))
-                continue
+                c.execute('INSERT INTO availability_state(name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end) VALUES(?,?,?,?,?,0,0,?,?,?,?)',(name,now_s,now_s,online,maintenance,1 if down else 0,down,down,None));continue
             started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r
             try:elapsed=max(0,min((now-datetime.fromisoformat(last_ts)).total_seconds(),max_gap))
             except Exception:elapsed=0
             if not last_maintenance:
                 monitored+=elapsed
                 if last_online:online_sec+=elapsed
-            if maintenance:
-                current_down=None
+            if maintenance:current_down=None
             elif not online:
-                if current_down is None and (last_online or last_maintenance):
-                    outages+=1;current_down=now_s;last_down_start=now_s
-            elif current_down:
-                # Erst zwei aufeinanderfolgende ONLINE-Polls beenden einen Ausfall.
-                # Dadurch erzeugt ein kurzer SSH-Erfolg während eines Reboots keinen zweiten Ausfall.
-                if last_online:
-                    last_down_end=now_s;current_down=None
+                if current_down is None and (last_online or last_maintenance):outages+=1;current_down=now_s;last_down_start=now_s
+            elif current_down and last_online:last_down_end=now_s;current_down=None
             c.execute('UPDATE availability_state SET last_ts=?,last_online=?,last_maintenance=?,monitored_seconds=?,online_seconds=?,outages=?,current_down_since=?,last_down_start=?,last_down_end=? WHERE name=?',(now_s,online,maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end,name))
 def availability_stats():
     result=[]
-    with sqlite3.connect(DB) as c:
-        rows=c.execute('SELECT name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state ORDER BY name').fetchall()
+    with sqlite3.connect(DB) as c:rows=c.execute('SELECT name,started_at,last_ts,last_online,last_maintenance,monitored_seconds,online_seconds,outages,current_down_since,last_down_start,last_down_end FROM availability_state ORDER BY name').fetchall()
     for r in rows:
-        name,started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r
-        monitored=float(monitored or 0);online_sec=float(online_sec or 0);downtime=max(0,monitored-online_sec);pct=(online_sec/monitored*100) if monitored>0 else None
+        name,started,last_ts,last_online,last_maintenance,monitored,online_sec,outages,current_down,last_down_start,last_down_end=r;monitored=float(monitored or 0);online_sec=float(online_sec or 0);downtime=max(0,monitored-online_sec);pct=(online_sec/monitored*100) if monitored>0 else None
         result.append({'name':name,'started_at':started,'last_ts':last_ts,'online':bool(last_online),'maintenance':bool(last_maintenance),'monitored_seconds':round(monitored),'online_seconds':round(online_sec),'downtime_seconds':round(downtime),'availability':round(pct,3) if pct is not None else None,'outages':int(outages or 0),'current_down_since':current_down,'last_down_start':last_down_start,'last_down_end':last_down_end})
     return result
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
@@ -80,8 +71,7 @@ def save_settings(s):
         with open(tmp,'w',encoding='utf-8') as f:json.dump(s,f,ensure_ascii=False,indent=2)
         os.chmod(tmp,0o600);os.replace(tmp,SETTINGS_FILE);os.chmod(SETTINGS_FILE,0o600)
 def maintenance_info(name):
-    m=load_settings().get('maintenance_nodes',{}).get(name)
-    return {'active':bool(m),'since':m.get('since') if isinstance(m,dict) else None}
+    m=load_settings().get('maintenance_nodes',{}).get(name);return {'active':bool(m),'since':m.get('since') if isinstance(m,dict) else None}
 def set_maintenance(name,active):
     s=load_settings();m=s.setdefault('maintenance_nodes',{})
     if active:m[name]={'since':datetime.now().isoformat(timespec='seconds')}
@@ -161,22 +151,16 @@ def process_node_notifications(nodes):
                 if node['online']:
                     if is_down:
                         if mail_enabled() and st['recovery_mail']:
-                            try:
-                                send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}')
-                                record_notification('RECOVERY',name,True,ts=now)
-                            except Exception as e:
-                                record_notification('RECOVERY',name,False,e,now);print(f'mail recovery error {name}: {e}',flush=True);continue
+                            try:send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}');record_notification('RECOVERY',name,True,ts=now)
+                            except Exception as e:record_notification('RECOVERY',name,False,e,now);print(f'mail recovery error {name}: {e}',flush=True);continue
                         c.execute('UPDATE node_alert_state SET failures=0,is_down=0,down_since=NULL,last_recovery=? WHERE name=?',(now,name))
                     elif failures:c.execute('UPDATE node_alert_state SET failures=0 WHERE name=?',(name,))
                 else:
                     failures+=1
                     if not is_down and failures>=st['failures_before_alert']:
                         if mail_enabled():
-                            try:
-                                send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}')
-                                record_notification('NODE DOWN',name,True,ts=now)
-                            except Exception as e:
-                                record_notification('NODE DOWN',name,False,e,now);print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
+                            try:send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}');record_notification('NODE DOWN',name,True,ts=now)
+                            except Exception as e:record_notification('NODE DOWN',name,False,e,now);print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
                         c.execute('UPDATE node_alert_state SET failures=?,is_down=1,down_since=?,last_alert=? WHERE name=?',(failures,now,now,name))
                     else:c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name))
 def poll_node(node):
@@ -216,8 +200,7 @@ def cluster_health(nodes,vrrp):
 def poll():
     c=cfg();ns={n['name']:poll_node(n) for n in c.get('nodes',[])}
     for name in ns:ns[name]['maintenance']=maintenance_info(name)
-    record_availability(ns)
-    process_node_notifications(ns)
+    record_availability(ns);process_node_notifications(ns)
     for name in ns:ns[name]['notification']=notification_status(name)
     vs=[]
     for v in c.get('vrrp',[]):
@@ -271,11 +254,8 @@ def update_settings():
 def test_notification():
     if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
     now=datetime.now().isoformat(timespec='seconds')
-    try:
-        send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.')
-        record_notification('TEST',None,True,ts=now);s=load_settings();s['last_test']=now;s['last_test_ok']=True;save_settings(s);return jsonify({'ok':True})
-    except Exception as e:
-        record_notification('TEST',None,False,e,now);s=load_settings();s['last_test']=now;s['last_test_ok']=False;save_settings(s);return jsonify({'ok':False,'error':str(e)}),502
+    try:send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.');record_notification('TEST',None,True,ts=now);s=load_settings();s['last_test']=now;s['last_test_ok']=True;save_settings(s);return jsonify({'ok':True})
+    except Exception as e:record_notification('TEST',None,False,e,now);s=load_settings();s['last_test']=now;s['last_test_ok']=False;save_settings(s);return jsonify({'ok':False,'error':str(e)}),502
 @app.get('/api/notifications/history')
 @login_required
 def notification_history():
