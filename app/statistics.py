@@ -1,6 +1,6 @@
 import sqlite3, threading, time
 from datetime import datetime, timedelta
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, render_template
 
 bp=Blueprint('statistics',__name__)
 _core=None
@@ -182,6 +182,12 @@ def init_statistics(core):
     if not _started:
         _started=True
         threading.Thread(target=_watch,daemon=True).start()
+
+
+@bp.get('/statistics')
+def statistics_page():
+    if not _auth():return _core.redirect(_core.url_for('login',next=request.path))
+    return render_template('statistics.html',nodes=_core.cfg().get('nodes',[]),csrf=_core.session['csrf'])
 
 
 @bp.get('/api/statistics')
