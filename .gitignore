@@ -5,6 +5,9 @@ ssh/*
 # Local environment / secrets
 .env
 
+# Local production configuration
+config/config.yml
+
 # Runtime data
 data/*
 !data/.gitkeep
