@@ -4,10 +4,12 @@ from cluster_integration import init_cluster_validation
 from statistics import init_statistics
 from node_actions import init_node_actions
 from config_transfer import init_config_transfer
+from failover_test import init_failover_test
 
 init_eventlog(core)
 init_cluster_validation(core)
 init_statistics(core)
 init_node_actions(core)
 init_config_transfer(core)
+init_failover_test(core)
 app=core.app
