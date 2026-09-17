@@ -113,14 +113,39 @@ Nodes können gezielt in den Wartungsmodus versetzt werden. Während geplanter W
 - werden normale Node-Down-/Recovery-Benachrichtigungen unterdrückt
 - berücksichtigt die HA-Diagnose den Wartungszustand des Nodes
 
-### 🔔 E-Mail-Benachrichtigungen
+### 🔔 Benachrichtigungen
 
-Optional können SMTP-Benachrichtigungen versendet werden, beispielsweise bei:
+Keepalived Monitor unterstützt Benachrichtigungen über **E-Mail und Telegram**.
+
+Über einen globalen Master-Schalter kann das Benachrichtigungssystem vollständig aktiviert oder deaktiviert werden. Die einzelnen Kanäle lassen sich anschließend unabhängig voneinander konfigurieren.
+
+Unterstützte Ereignisse:
 
 - Node-Ausfall
 - Wiederherstellung eines Nodes
 
-Die Anzahl fehlgeschlagener Prüfungen vor einer Benachrichtigung ist konfigurierbar. Zusätzlich besitzt die Anwendung eine Benachrichtigungs-Historie.
+Konfigurierbar sind unter anderem:
+
+- Benachrichtigungen global aktiv/inaktiv
+- Node-DOWN-Benachrichtigungen
+- Node-ONLINE-/Recovery-Benachrichtigungen
+- Anzahl fehlgeschlagener Prüfungen bis zur Alarmierung
+- E-Mail aktiv/inaktiv
+- Telegram aktiv/inaktiv
+
+E-Mail- und Telegram-Benachrichtigungen können gleichzeitig verwendet werden.
+
+#### E-Mail
+
+SMTP-Server, Empfänger und Zugangsdaten werden über die Einstellungsseite konfiguriert. Das SMTP-Passwort wird geschützt gespeichert und kann über eine Testmail geprüft werden.
+
+#### Telegram
+
+Für Telegram werden Bot-Token und Chat-ID direkt über die Einstellungsseite hinterlegt.
+
+Der Bot-Token wird verschlüsselt gespeichert und nach dem Speichern nicht wieder im Webinterface angezeigt. Eine integrierte Testfunktion ermöglicht die direkte Prüfung der Telegram-Konfiguration.
+
+> Telegram Bot-Token und Chat-ID werden nicht über `.env` konfiguriert.
 
 ### 🕓 Ereignis-Historie
 
@@ -355,27 +380,26 @@ Bei ausschließlicher HTTPS-Nutzung:
 COOKIE_SECURE=true
 ```
 
-## 5. Optional: E-Mail-Benachrichtigungen
+## 5. Optional: Benachrichtigungen konfigurieren
 
-Beispiel für SMTP mit STARTTLS:
+E-Mail- und Telegram-Benachrichtigungen werden nach dem ersten Start direkt über die Seite **Einstellungen** im Webinterface konfiguriert.
 
-```dotenv
-MAIL_ENABLED=true
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_SECURITY=starttls
-SMTP_USERNAME=monitor@example.com
-SMTP_PASSWORD=DEIN-SMTP-PASSWORT
-MAIL_FROM=monitor@example.com
-MAIL_TO=admin@example.com
-```
+Dort stehen zur Verfügung:
 
-Ohne E-Mail-Versand:
+- globaler Benachrichtigungs-Master
+- Node-DOWN-Benachrichtigungen
+- Node-ONLINE-/Recovery-Benachrichtigungen
+- Fehlversuche bis zur Alarmierung
+- SMTP-/E-Mail-Konfiguration
+- Telegram Bot-Token und Chat-ID
+- Testmail
+- Telegram-Testnachricht
 
-```dotenv
-MAIL_ENABLED=false
-```
+Die Einstellungen werden persistent im Datenverzeichnis der Anwendung gespeichert.
 
+Sensible Zugangsdaten wie SMTP-Passwort und Telegram Bot-Token werden nicht im Klartext über die Oberfläche zurückgegeben.
+
+> Für Telegram sind keine zusätzlichen `.env`-Variablen erforderlich.
 ## 6. Container bauen und starten
 
 ```bash
