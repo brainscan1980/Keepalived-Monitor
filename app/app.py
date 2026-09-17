@@ -1,4 +1,7 @@
 import base64, hashlib, json, os, secrets, sqlite3, subprocess, threading, time, smtplib, ssl
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from email.message import EmailMessage
 from functools import wraps
@@ -56,7 +59,37 @@ def availability_stats():
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
 def env_bool(n,d=False):return os.getenv(n,str(d)).lower() in {'1','true','yes','on'}
 def defaults():
-    n=(cfg().get('notifications',{}).get('node_down',{}) or {});return {'mail_enabled':env_bool('MAIL_ENABLED'),'node_down':bool(n.get('enabled',True)),'recovery_mail':bool(n.get('recovery_mail',True)),'failures_before_alert':max(1,int(n.get('failures_before_alert',3))),'smtp_host':os.getenv('SMTP_HOST',''),'smtp_port':int(os.getenv('SMTP_PORT','587')),'smtp_security':os.getenv('SMTP_SECURITY','starttls').lower(),'smtp_username':os.getenv('SMTP_USERNAME',''),'smtp_password_enc':'','mail_from':os.getenv('MAIL_FROM',''),'mail_to':os.getenv('MAIL_TO',''),'last_test':None,'last_test_ok':None,'maintenance_nodes':{}}
+    n = (cfg().get('notifications', {}).get('node_down', {}) or {})
+
+    return {
+        'notifications_enabled': True,
+        'mail_enabled': env_bool('MAIL_ENABLED'),
+        'node_down': bool(n.get('enabled', True)),
+        'recovery_mail': bool(n.get('recovery_mail', True)),
+        'failures_before_alert': max(
+            1,
+            int(n.get('failures_before_alert', 3))
+        ),
+        'smtp_host': os.getenv('SMTP_HOST', ''),
+        'smtp_port': int(os.getenv('SMTP_PORT', '587')),
+        'smtp_security': os.getenv(
+            'SMTP_SECURITY',
+            'starttls'
+        ).lower(),
+        'smtp_username': os.getenv('SMTP_USERNAME', ''),
+        'smtp_password_enc': '',
+        'mail_from': os.getenv('MAIL_FROM', ''),
+        'mail_to': os.getenv('MAIL_TO', ''),
+        'last_test': None,
+        'last_test_ok': None,
+        'telegram_enabled': False,
+        'telegram_bot_token_enc': '',
+        'telegram_chat_id': '',
+        'telegram_last_test': None,
+        'telegram_last_test_ok': None,
+        'maintenance_nodes': {},
+    }
+
 def load_settings():
     s=defaults()
     with settings_lock:
@@ -85,8 +118,39 @@ def smtp_password(s):
         try:return fernet().decrypt(s['smtp_password_enc'].encode()).decode()
         except InvalidToken:raise RuntimeError('SMTP-Passwort kann nicht entschlüsselt werden. Bitte neu eingeben.')
     return os.getenv('SMTP_PASSWORD','')
+def telegram_bot_token(s):
+    if s.get('telegram_bot_token_enc'):
+        try:
+            return fernet().decrypt(
+                s['telegram_bot_token_enc'].encode()
+            ).decode()
+        except InvalidToken:
+            raise RuntimeError(
+                'Telegram Bot-Token kann nicht entschlüsselt werden. Bitte neu eingeben.'
+            )
+    return ''
 def public_settings():
-    s=load_settings();return {k:v for k,v in s.items() if k not in {'smtp_password_enc','maintenance_nodes'}}|{'smtp_password_set':bool(s.get('smtp_password_enc') or os.getenv('SMTP_PASSWORD',''))}
+    s = load_settings()
+
+    public = {
+        k: v
+        for k, v in s.items()
+        if k not in {
+            'smtp_password_enc',
+            'telegram_bot_token_enc',
+            'maintenance_nodes',
+        }
+    }
+
+    public['smtp_password_set'] = bool(
+        s.get('smtp_password_enc') or os.getenv('SMTP_PASSWORD', '')
+    )
+
+    public['telegram_bot_token_set'] = bool(
+        s.get('telegram_bot_token_enc')
+    )
+
+    return public
 def mail_enabled():return bool(load_settings().get('mail_enabled'))
 def send_mail(subject,body):
     s=load_settings()
@@ -104,6 +168,73 @@ def send_mail(subject,body):
             if security=='starttls':smtp.starttls(context=context);smtp.ehlo()
             if username:smtp.login(username,password)
             smtp.send_message(msg)
+def send_telegram(message):
+    s = load_settings()
+
+    token = telegram_bot_token(s)
+    chat_id = str(s.get('telegram_chat_id', '')).strip()
+
+    if not token:
+        raise RuntimeError('Telegram Bot-Token ist nicht gesetzt')
+
+    if not chat_id:
+        raise RuntimeError('Telegram Chat-ID ist nicht gesetzt')
+
+    url = f'https://api.telegram.org/bot{token}/sendMessage'
+
+    data = urllib.parse.urlencode({
+        'chat_id': chat_id,
+        'text': str(message),
+        'disable_web_page_preview': 'true',
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method='POST',
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Keepalived-Monitor',
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+
+    except urllib.error.HTTPError as e:
+        try:
+            payload = json.loads(e.read().decode('utf-8'))
+            description = str(
+                payload.get('description') or 'Telegram API-Fehler'
+            )
+        except Exception:
+            description = f'Telegram API-Fehler (HTTP {e.code})'
+
+        raise RuntimeError(description)
+
+    except urllib.error.URLError as e:
+        reason = str(getattr(e, 'reason', '') or '').strip()
+
+        if reason:
+            raise RuntimeError(
+                f'Telegram API nicht erreichbar: {reason}'
+            )
+
+        raise RuntimeError('Telegram API nicht erreichbar')
+
+    except TimeoutError:
+        raise RuntimeError('Zeitüberschreitung beim Telegram-Versand')
+
+    except json.JSONDecodeError:
+        raise RuntimeError('Ungültige Antwort der Telegram API')
+
+    if not payload.get('ok'):
+        raise RuntimeError(
+            str(payload.get('description') or 'Telegram-Versand fehlgeschlagen')
+        )
+
+    return True
 def ssh(node,command,timeout=8):
     s=cfg().get('ssh',{});args=['ssh','-o','BatchMode=yes','-o',f"ConnectTimeout={s.get('connect_timeout',3)}"]
     if s.get('key_file'):args+=['-i',s['key_file']]
@@ -131,39 +262,227 @@ def fmt_duration(start,end):
         return ' '.join(p)
     except Exception:return 'unbekannt'
 def notification_cfg():
-    s=load_settings();return {'enabled':bool(s.get('node_down',True)),'failures_before_alert':max(1,min(20,int(s.get('failures_before_alert',3)))),'recovery_mail':bool(s.get('recovery_mail',True))}
+    s = load_settings()
+
+    return {
+        'notifications_enabled': bool(
+            s.get('notifications_enabled', True)
+        ),
+        'node_down': bool(
+            s.get('node_down', True)
+        ),
+        'failures_before_alert': max(
+            1,
+            min(20, int(s.get('failures_before_alert', 3)))
+        ),
+        'recovery_mail': bool(
+            s.get('recovery_mail', True)
+        ),
+    }
 def notification_status(name):
-    st=notification_cfg();maintenance=maintenance_info(name)
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
-    return {'enabled':mail_enabled() and st['enabled'] and not maintenance['active'],'suppressed':maintenance['active'],'failures':r[0] if r else 0,'is_down':bool(r[1]) if r else False,'down_since':r[2] if r else None,'last_alert':r[3] if r else None,'last_recovery':r[4] if r else None,'failures_before_alert':st['failures_before_alert']}
+    st = notification_cfg()
+    maintenance = maintenance_info(name)
+    s = load_settings()
+
+    channel_enabled = bool(
+        s.get('mail_enabled') or s.get('telegram_enabled')
+    )
+
+    with sqlite3.connect(DB) as c:
+        r = c.execute(
+            '''
+            SELECT failures,is_down,down_since,last_alert,last_recovery
+            FROM node_alert_state
+            WHERE name=?
+            ''',
+            (name,)
+        ).fetchone()
+
+    return {
+        'enabled': (
+            channel_enabled
+            and st['notifications_enabled']
+            and (
+                st['node_down']
+                or st['recovery_mail']
+            )
+            and not maintenance['active']
+        ),
+        'suppressed': maintenance['active'],
+        'failures': r[0] if r else 0,
+        'is_down': bool(r[1]) if r else False,
+        'down_since': r[2] if r else None,
+        'last_alert': r[3] if r else None,
+        'last_recovery': r[4] if r else None,
+        'failures_before_alert': st['failures_before_alert'],
+    }
+def send_node_notification(kind, name, node, now, down_since=None, failures=None):
+    s = load_settings()
+
+    if kind == 'RECOVERY':
+        subject = f'🟢 Keepalived Monitor – {name} wieder ONLINE'
+        body = (
+            f'Node: {name}\n'
+            f'Host: {node["host"]}\n'
+            'Status: ONLINE\n'
+            f'Zeitpunkt: {now}\n'
+            f'Ausfallzeit: {fmt_duration(down_since, now)}'
+        )
+    elif kind == 'NODE DOWN':
+        subject = f'🔴 Keepalived Monitor – Node DOWN: {name}'
+        body = (
+            f'Node: {name}\n'
+            f'Host: {node["host"]}\n'
+            'Status: NICHT ERREICHBAR\n'
+            f'Zeitpunkt: {now}\n'
+            f'Fehlgeschlagene Prüfungen: {failures}'
+        )
+    else:
+        raise ValueError(f'Unbekannter Benachrichtigungstyp: {kind}')
+
+    # E-Mail ist ein unabhängiger Kanal.
+    if s.get('mail_enabled'):
+        try:
+            send_mail(subject, body)
+            record_notification(kind, name, True, ts=now)
+        except Exception as e:
+            record_notification(kind, name, False, e, now)
+            print(f'mail notification error {name}: {e}', flush=True)
+
+    # Telegram ist ebenfalls unabhängig.
+    if s.get('telegram_enabled'):
+        try:
+            send_telegram(f'{subject}\n\n{body}')
+        except Exception as e:
+            print(f'telegram notification error {name}: {e}', flush=True)
 def process_node_notifications(nodes):
-    st=notification_cfg()
-    if not st['enabled']:return
-    now=datetime.now().isoformat(timespec='seconds')
+    st = notification_cfg()
+
+    if not st['notifications_enabled']:
+        return
+
+    if not st['node_down'] and not st['recovery_mail']:
+        return
+
+    now = datetime.now().isoformat(timespec='seconds')
+
     with notification_lock:
-        for name,node in nodes.items():
+        for name, node in nodes.items():
+            notification = None
+
             if maintenance_info(name)['active']:
-                with sqlite3.connect(DB) as c:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,0,0) ON CONFLICT(name) DO UPDATE SET failures=0,is_down=0,down_since=NULL',(name,))
+                with sqlite3.connect(DB) as c:
+                    c.execute(
+                        '''
+                        INSERT INTO node_alert_state(name,failures,is_down)
+                        VALUES(?,0,0)
+                        ON CONFLICT(name) DO UPDATE SET
+                            failures=0,
+                            is_down=0,
+                            down_since=NULL
+                        ''',
+                        (name,)
+                    )
                 continue
+
             with sqlite3.connect(DB) as c:
-                r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
-                if r is None:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,?,?)',(name,0 if node['online'] else 1,0));continue
-                failures,is_down,down_since,_,_=r
+                r = c.execute(
+                    '''
+                    SELECT failures,is_down,down_since,last_alert,last_recovery
+                    FROM node_alert_state
+                    WHERE name=?
+                    ''',
+                    (name,)
+                ).fetchone()
+
+                if r is None:
+                    c.execute(
+                        '''
+                        INSERT INTO node_alert_state(name,failures,is_down)
+                        VALUES(?,?,?)
+                        ''',
+                        (name, 0 if node['online'] else 1, 0)
+                    )
+                    continue
+
+                failures, is_down, down_since, _, _ = r
+
                 if node['online']:
                     if is_down:
-                        if mail_enabled() and st['recovery_mail']:
-                            try:send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}');record_notification('RECOVERY',name,True,ts=now)
-                            except Exception as e:record_notification('RECOVERY',name,False,e,now);print(f'mail recovery error {name}: {e}',flush=True);continue
-                        c.execute('UPDATE node_alert_state SET failures=0,is_down=0,down_since=NULL,last_recovery=? WHERE name=?',(now,name))
-                    elif failures:c.execute('UPDATE node_alert_state SET failures=0 WHERE name=?',(name,))
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=0,
+                                is_down=0,
+                                down_since=NULL,
+                                last_recovery=?
+                            WHERE name=?
+                            ''',
+                            (now, name)
+                        )
+
+                        if st['recovery_mail']:
+                            notification = {
+                                'kind': 'RECOVERY',
+                                'down_since': down_since,
+                            }
+
+                    elif failures:
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=0
+                            WHERE name=?
+                            ''',
+                            (name,)
+                        )
+
                 else:
-                    failures+=1
-                    if not is_down and failures>=st['failures_before_alert']:
-                        if mail_enabled():
-                            try:send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}');record_notification('NODE DOWN',name,True,ts=now)
-                            except Exception as e:record_notification('NODE DOWN',name,False,e,now);print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
-                        c.execute('UPDATE node_alert_state SET failures=?,is_down=1,down_since=?,last_alert=? WHERE name=?',(failures,now,now,name))
-                    else:c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name))
+                    failures += 1
+
+                    if (
+                        not is_down
+                        and failures >= st['failures_before_alert']
+                    ):
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=?,
+                                is_down=1,
+                                down_since=?,
+                                last_alert=?
+                            WHERE name=?
+                            ''',
+                            (failures, now, now, name)
+                        )
+
+                        if st['node_down']:
+                            notification = {
+                                'kind': 'NODE DOWN',
+                                'failures': failures,
+                            }
+
+                    else:
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=?
+                            WHERE name=?
+                            ''',
+                            (failures, name)
+                        )
+
+            # Wichtig:
+            # Erst hier ist die vorherige SQLite-Transaktion beendet.
+            if notification:
+                send_node_notification(
+                    notification['kind'],
+                    name,
+                    node,
+                    now,
+                    down_since=notification.get('down_since'),
+                    failures=notification.get('failures'),
+                )
 def poll_node(node):
     cmd="printf 'KEEP='; systemctl is-active keepalived 2>/dev/null || true; printf 'UP='; uptime -p 2>/dev/null || true; printf 'ADDR='; ip -j addr show 2>/dev/null || true";rc,out,err=ssh(node,cmd);d={'name':node['name'],'host':node['host'],'online':rc==0,'keepalived':'unknown','uptime':'-','addresses':[],'error':err if rc else ''}
     if rc:return d
@@ -251,16 +570,93 @@ def get_settings():return jsonify(public_settings())
 @app.post('/api/settings')
 @login_required
 def update_settings():
-    if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
+    if not csrf_ok():
+        return jsonify({'ok': False, 'error': 'Ungültiges CSRF-Token'}), 403
+
     try:
-        d=request.get_json(force=True) or {};s=load_settings();security=str(d.get('smtp_security','starttls')).lower();port=int(d.get('smtp_port',587));failures=int(d.get('failures_before_alert',3))
-        if security not in {'starttls','ssl','smtps','none'}:raise ValueError('Ungültige SMTP-Verschlüsselung')
-        if not 1<=port<=65535:raise ValueError('SMTP-Port muss zwischen 1 und 65535 liegen')
-        if not 1<=failures<=20:raise ValueError('Fehlversuche müssen zwischen 1 und 20 liegen')
-        s.update(mail_enabled=bool(d.get('mail_enabled')),node_down=bool(d.get('node_down')),recovery_mail=bool(d.get('recovery_mail')),failures_before_alert=failures,smtp_host=str(d.get('smtp_host','')).strip(),smtp_port=port,smtp_security=security,smtp_username=str(d.get('smtp_username','')).strip(),mail_from=str(d.get('mail_from','')).strip(),mail_to=str(d.get('mail_to','')).strip())
-        if str(d.get('smtp_password','')):s['smtp_password_enc']=fernet().encrypt(str(d['smtp_password']).encode()).decode()
-        save_settings(s);return jsonify({'ok':True,'settings':public_settings()})
-    except Exception as e:return jsonify({'ok':False,'error':str(e)}),400
+        d = request.get_json(force=True) or {}
+        s = load_settings()
+
+        security = str(d.get('smtp_security', 'starttls')).lower()
+        port = int(d.get('smtp_port', 587))
+        failures = int(d.get('failures_before_alert', 3))
+
+        if security not in {'starttls', 'ssl', 'smtps', 'none'}:
+            raise ValueError('Ungültige SMTP-Verschlüsselung')
+
+        if not 1 <= port <= 65535:
+            raise ValueError('SMTP-Port muss zwischen 1 und 65535 liegen')
+
+        if not 1 <= failures <= 20:
+            raise ValueError('Fehlversuche müssen zwischen 1 und 20 liegen')
+
+        # Telegram
+        telegram_enabled = bool(d.get('telegram_enabled'))
+        telegram_chat_id = str(d.get('telegram_chat_id', '')).strip()
+        telegram_token = str(d.get('telegram_bot_token', '')).strip()
+
+        # Ein leeres Token-Feld bedeutet:
+        # Bereits gespeicherten Token unverändert beibehalten.
+        telegram_token_available = bool(
+            telegram_token or s.get('telegram_bot_token_enc')
+        )
+
+        if telegram_enabled:
+            if not telegram_token_available:
+                raise ValueError(
+                    'Für Telegram muss ein Bot-Token hinterlegt sein'
+                )
+
+            if not telegram_chat_id:
+                raise ValueError(
+                    'Für Telegram muss eine Chat-ID hinterlegt sein'
+                )
+
+        s.update(
+            mail_enabled=bool(d.get('mail_enabled')),
+            notifications_enabled=bool(
+                d.get('notifications_enabled', True)
+            ),
+            node_down=bool(d.get('node_down')),
+            recovery_mail=bool(d.get('recovery_mail')),
+            failures_before_alert=failures,
+            smtp_host=str(d.get('smtp_host', '')).strip(),
+            smtp_port=port,
+            smtp_security=security,
+            smtp_username=str(d.get('smtp_username', '')).strip(),
+            mail_from=str(d.get('mail_from', '')).strip(),
+            mail_to=str(d.get('mail_to', '')).strip(),
+
+            telegram_enabled=telegram_enabled,
+            telegram_chat_id=telegram_chat_id,
+        )
+
+        # SMTP-Passwort nur ersetzen, wenn tatsächlich eines
+        # übermittelt wurde.
+        if str(d.get('smtp_password', '')):
+            s['smtp_password_enc'] = fernet().encrypt(
+                str(d['smtp_password']).encode()
+            ).decode()
+
+        # Telegram-Token ebenfalls nur ersetzen, wenn ein neuer
+        # Token übermittelt wurde.
+        if telegram_token:
+            s['telegram_bot_token_enc'] = fernet().encrypt(
+                telegram_token.encode()
+            ).decode()
+
+        save_settings(s)
+
+        return jsonify({
+            'ok': True,
+            'settings': public_settings(),
+        })
+
+    except Exception as e:
+        return jsonify({
+            'ok': False,
+            'error': str(e),
+        }), 400
 @app.post('/api/notifications/test')
 @login_required
 def test_notification():
@@ -268,6 +664,44 @@ def test_notification():
     now=datetime.now().isoformat(timespec='seconds')
     try:send_mail('Keepalived Monitor – Testmail',f'Dies ist eine Testmail des Keepalived Monitors.\n\nZeitpunkt: {now}\nSMTP-Konfiguration: erfolgreich.');record_notification('TEST',None,True,ts=now);s=load_settings();s['last_test']=now;s['last_test_ok']=True;save_settings(s);return jsonify({'ok':True})
     except Exception as e:record_notification('TEST',None,False,e,now);s=load_settings();s['last_test']=now;s['last_test_ok']=False;save_settings(s);return jsonify({'ok':False,'error':str(e)}),502
+@app.post('/api/notifications/telegram/test')
+@login_required
+def test_telegram_notification():
+    if not csrf_ok():
+        return jsonify({
+            'ok': False,
+            'error': 'Ungültiges CSRF-Token',
+        }), 403
+
+    now = datetime.now().isoformat(timespec='seconds')
+
+    try:
+        send_telegram(
+            'Keepalived Monitor – Telegram-Test\n\n'
+            'Dies ist eine Testnachricht des Keepalived Monitors.\n\n'
+            f'Zeitpunkt: {now}\n'
+            'Telegram-Konfiguration: erfolgreich.'
+        )
+
+        s = load_settings()
+        s['telegram_last_test'] = now
+        s['telegram_last_test_ok'] = True
+        save_settings(s)
+
+        return jsonify({
+            'ok': True,
+        })
+
+    except Exception as e:
+        s = load_settings()
+        s['telegram_last_test'] = now
+        s['telegram_last_test_ok'] = False
+        save_settings(s)
+
+        return jsonify({
+            'ok': False,
+            'error': str(e),
+        }), 502
 @app.get('/api/notifications/history')
 @login_required
 def notification_history():
