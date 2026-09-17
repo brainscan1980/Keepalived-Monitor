@@ -1,7 +1,51 @@
 function initSidebar(){const shell=document.querySelector('.app-shell'),collapse=document.querySelector('#sidebarCollapse'),menu=document.querySelector('#mobileMenu'),overlay=document.querySelector('#sidebarOverlay');const desktop=()=>innerWidth>900;if(desktop()&&localStorage.getItem('sidebarCollapsed')==='1')shell.classList.add('sidebar-collapsed');collapse?.addEventListener('click',()=>{shell.classList.toggle('sidebar-collapsed');localStorage.setItem('sidebarCollapsed',shell.classList.contains('sidebar-collapsed')?'1':'0')});const mobile=o=>{shell.classList.toggle('sidebar-open',o);menu.textContent=o?'✕':'☰'};menu?.addEventListener('click',()=>mobile(!shell.classList.contains('sidebar-open')));overlay?.addEventListener('click',()=>mobile(false))}
 const systemDark=matchMedia('(prefers-color-scheme: dark)'),getTheme=()=>localStorage.getItem('theme')||'auto';function applyTheme(m=getTheme()){document.documentElement.classList.toggle('dark',m==='dark'||(m==='auto'&&systemDark.matches));document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===m))}document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)});initSidebar();applyTheme();
-const ids=['mail_enabled','node_down','recovery_mail','failures_before_alert','smtp_host','smtp_port','smtp_security','smtp_username','mail_from','mail_to'];let current={},pendingConfigFile=null,failoverPreflight=null;const fmt=v=>v?new Date(v).toLocaleString():'–';const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function summary(s){document.querySelector('#settingsStatus').innerHTML=`<div><span class="dot ${s.mail_enabled?'good':'unknown'}"></span><b>E-Mail: ${s.mail_enabled?'Aktiv':'Inaktiv'}</b></div><div>SMTP: <b>${s.smtp_host&&s.mail_from&&s.mail_to?'Konfiguriert':'Unvollständig'}</b></div><div>Passwort: <b>${s.smtp_password_set?'Gespeichert':'Nicht gesetzt'}</b></div><div>Letzte Testmail: <b class="${s.last_test_ok===true?'good':s.last_test_ok===false?'bad':'unknown'}">${fmt(s.last_test)}${s.last_test_ok===true?' · Erfolgreich':s.last_test_ok===false?' · Fehlgeschlagen':''}</b></div>`}
+const ids=['mail_enabled','node_down','recovery_mail','failures_before_alert','smtp_host','smtp_port','smtp_security','smtp_username','mail_from','mail_to','telegram_enabled','telegram_chat_id'];let current={},pendingConfigFile=null,failoverPreflight=null;const fmt=v=>v?new Date(v).toLocaleString():'–';const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function summary(s){
+    document.querySelector('#settingsStatus').innerHTML=`
+        <div>
+            <span class="dot ${s.mail_enabled?'good':'unknown'}"></span>
+            <b>E-Mail: ${s.mail_enabled?'Aktiv':'Inaktiv'}</b>
+        </div>
+        <div>
+            SMTP: <b>${s.smtp_host&&s.mail_from&&s.mail_to?'Konfiguriert':'Unvollständig'}</b>
+        </div>
+        <div>
+            SMTP-Passwort: <b>${s.smtp_password_set?'Gespeichert':'Nicht gesetzt'}</b>
+        </div>
+        <div>
+            Letzte Testmail:
+            <b class="${s.last_test_ok===true?'good':s.last_test_ok===false?'bad':'unknown'}">
+                ${fmt(s.last_test)}
+                ${s.last_test_ok===true?' · Erfolgreich':s.last_test_ok===false?' · Fehlgeschlagen':''}
+            </b>
+        </div>
+        <div>
+            <span class="dot ${s.telegram_enabled?'good':'unknown'}"></span>
+            <b>Telegram: ${s.telegram_enabled?'Aktiv':'Inaktiv'}</b>
+        </div>
+        <div>
+            Telegram-Token: <b>${s.telegram_bot_token_set?'Gespeichert':'Nicht gesetzt'}</b>
+        </div>
+        <div>
+            Telegram Chat-ID: <b>${s.telegram_chat_id?'Konfiguriert':'Nicht gesetzt'}</b>
+        </div>
+        <div>
+            Letzter Telegram-Test:
+            <b class="${s.telegram_last_test_ok===true?'good':s.telegram_last_test_ok===false?'bad':'unknown'}">
+                ${fmt(s.telegram_last_test)}
+                ${s.telegram_last_test_ok===true?' · Erfolgreich':s.telegram_last_test_ok===false?' · Fehlgeschlagen':''}
+            </b>
+        </div>
+    `;
+    const tokenStatus=document.querySelector('#telegramTokenStatus');
+    if(tokenStatus){
+        tokenStatus.textContent=s.telegram_bot_token_set
+            ? '✓ Ein Bot-Token ist verschlüsselt gespeichert. Das Feld leer lassen, um ihn beizubehalten.'
+            : 'Noch kein Bot-Token gespeichert.';
+        tokenStatus.className=`meta ${s.telegram_bot_token_set?'good':''}`;
+    }
+}
 async function loadHistory(){const el=document.querySelector('#notificationHistory');if(!el)return;el.innerHTML='<div class="meta">Benachrichtigungs-Historie wird geladen…</div>';try{const r=await fetch('/api/notifications/history',{cache:'no-store'});if(!r.ok){if(r.status===404){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}throw new Error(`HTTP ${r.status}`)}const h=await r.json();if(!Array.isArray(h)||!h.length){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}el.innerHTML=h.map(x=>`<div class="row history-row"><span>${esc(fmt(x.ts))}</span><b>${esc(x.type||'MAIL')}</b><span>${esc(x.node||'–')}</span><span class="${x.ok?'good':'bad'}"><b>${x.ok?'ERFOLGREICH':'FEHLGESCHLAGEN'}</b>${x.error?`<div class="meta">${esc(x.error)}</div>`:''}</span></div>`).join('')}catch(e){el.innerHTML='<div class="meta bad"><b>Historie konnte nicht geladen werden.</b><br>Bitte die Seite später erneut laden.</div>'}}
 function bytes(n){if(n==null)return'–';if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}function diffShort(c){if(!c)return'';const n=c.nodes||{},v=c.vrrp||{},parts=[];if(n.added?.length)parts.push(`Nodes +${n.added.length}`);if(n.removed?.length)parts.push(`Nodes −${n.removed.length}`);if(n.changed?.length)parts.push(`Nodes geändert ${n.changed.length}`);if(v.added?.length)parts.push(`VRRP +${v.added.length}`);if(v.removed?.length)parts.push(`VRRP −${v.removed.length}`);if(v.changed?.length)parts.push(`VRRP geändert ${v.changed.length}`);if(c.refresh_changed)parts.push('Intervall geändert');return parts.length?parts.join(' · '):'entspricht der aktuellen Konfiguration'}
 async function loadBackups(){const el=document.querySelector('#configBackups');if(!el)return;el.innerHTML='<div class="meta">Sicherungen werden geladen…</div>';try{const r=await fetch('/api/config/backups',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Backups konnten nicht geladen werden.');if(!j.backups?.length){el.innerHTML='<div class="meta">Noch keine automatische Konfigurationssicherung vorhanden.</div>';return}el.innerHTML=j.backups.map(b=>`<div class="row history-row"><span><b>${esc(fmt(b.created))}</b><div class="meta">${esc(b.name)} · ${bytes(b.size)}</div></span><span>${b.valid?`<b>${b.summary.nodes} Nodes · ${b.summary.vrrp} VRRP</b><div class="meta">${esc(diffShort(b.changes))}</div>`:`<b class="bad">UNGÜLTIG</b><div class="meta">${esc(b.error)}</div>`}</span><span class="control-buttons" style="margin:0">${b.valid?`<button type="button" class="action-btn" data-restore-backup="${esc(b.name)}">↶ Wiederherstellen</button>`:''}<button type="button" class="action-btn stop" data-delete-backup="${esc(b.name)}">Löschen</button></span></div>`).join('');el.querySelectorAll('[data-restore-backup]').forEach(b=>b.onclick=()=>restoreBackup(b.dataset.restoreBackup));el.querySelectorAll('[data-delete-backup]').forEach(b=>b.onclick=()=>deleteBackup(b.dataset.deleteBackup))}catch(e){el.innerHTML=`<div class="meta bad">${esc(e.message)}</div>`}}
@@ -14,8 +58,42 @@ function renderFailoverResult(j){const out=document.querySelector('#failoverTest
 async function runFailoverTest(){if(!failoverPreflight)return;const masters=failoverPreflight.summary?.masters||[];if(masters.length!==1)return;const master=masters[0],instances=(failoverPreflight.instances||[]).filter(i=>i.allowed&&i.master===master),names=instances.map(i=>i.name).join(', ');if(!confirm(`ECHTEN FAILOVER-TEST STARTEN?\n\nKeepalived auf ${master} wird vorübergehend gestoppt.\nBetroffen: ${names}\n${instances.length} VRRP-Instanz${instances.length===1?'':'en'} werden auf ihre Backup-Nodes umgeschaltet.\n\nAnschließend wird Keepalived auf ${master} automatisch wieder gestartet und der Clusterzustand geprüft.\n\nWährend des Tests kann es zu kurzen Dienstunterbrechungen kommen.`))return;const btn=document.querySelector('#runFailoverTest'),refresh=document.querySelector('#refreshFailoverPreflight'),out=document.querySelector('#failoverTestResult');btn.disabled=true;refresh.disabled=true;out.textContent=`Failover-Test läuft…\nKeepalived auf ${master} wird kontrolliert aus dem Cluster genommen. Bitte diese Seite nicht neu laden.`;out.className='action-result warn';try{const r=await fetch('/api/failover-test/run',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN,'X-Confirm-Failover-Test':'yes','X-Confirm-Failover-Master':master}}),j=await r.json();if(!r.ok&&!j.steps)throw new Error(j.error||'Failover-Test konnte nicht gestartet werden');renderFailoverResult(j)}catch(e){out.textContent=`✕ ${e.message}`;out.className='action-result bad'}finally{refresh.disabled=false;await loadFailoverPreflight()}}
 async function load(){current=await (await fetch('/api/settings',{cache:'no-store'})).json();ids.forEach(id=>{const e=document.querySelector('#'+id);if(e.type==='checkbox')e.checked=!!current[id];else e.value=current[id]??''});summary(current);await Promise.all([loadHistory(),loadBackups(),loadFailoverPreflight()])}
 document.querySelector('#refreshFailoverPreflight')?.addEventListener('click',loadFailoverPreflight);document.querySelector('#runFailoverTest')?.addEventListener('click',runFailoverTest);
-document.querySelector('#settingsForm').addEventListener('submit',async e=>{e.preventDefault();const result=document.querySelector('#settingsResult'),data={};ids.forEach(id=>{const el=document.querySelector('#'+id);data[id]=el.type==='checkbox'?el.checked:el.value});data.smtp_password=document.querySelector('#smtp_password').value;result.textContent='Speichere…';const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF_TOKEN},body:JSON.stringify(data)}),j=await r.json();result.textContent=j.ok?'✓ Einstellungen gespeichert.':`✕ ${j.error||'Speichern fehlgeschlagen'}`;result.className=`action-result ${j.ok?'good':'bad'}`;if(j.ok){document.querySelector('#smtp_password').value='';current=j.settings;summary(current)}});
+document.querySelector('#settingsForm').addEventListener('submit',async e=>{e.preventDefault();const result=document.querySelector('#settingsResult'),data={};ids.forEach(id=>{const el=document.querySelector('#'+id);data[id]=el.type==='checkbox'?el.checked:el.value});data.smtp_password=document.querySelector('#smtp_password').value;data.telegram_bot_token=document.querySelector('#telegram_bot_token').value;result.textContent='Speichere…';const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF_TOKEN},body:JSON.stringify(data)}),j=await r.json();result.textContent=j.ok?'✓ Einstellungen gespeichert.':`✕ ${j.error||'Speichern fehlgeschlagen'}`;result.className=`action-result ${j.ok?'good':'bad'}`;if(j.ok){document.querySelector('#smtp_password').value='';document.querySelector('#telegram_bot_token').value='';current=j.settings;summary(current)}});
 document.querySelector('#testBtn').onclick=async()=>{const b=document.querySelector('#testBtn'),rEl=document.querySelector('#settingsResult');b.disabled=true;rEl.textContent='Testmail wird gesendet…';try{const r=await fetch('/api/notifications/test',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN}}),j=await r.json();rEl.textContent=j.ok?'✓ Testmail erfolgreich gesendet.':`✕ ${j.error||'Testmail fehlgeschlagen'}`;rEl.className=`action-result ${j.ok?'good':'bad'}`;await load()}finally{b.disabled=false}};
+document.querySelector('#telegramTestBtn')?.addEventListener('click',async()=>{
+    const b=document.querySelector('#telegramTestBtn');
+    const rEl=document.querySelector('#telegramResult');
+
+    b.disabled=true;
+    rEl.textContent='Telegram-Testnachricht wird gesendet…';
+    rEl.className='action-result';
+
+    try{
+        const r=await fetch('/api/notifications/telegram/test',{
+            method:'POST',
+            headers:{
+                'X-CSRF-Token':CSRF_TOKEN
+            }
+        });
+
+        const j=await r.json();
+
+        rEl.textContent=j.ok
+            ? '✓ Telegram-Testnachricht erfolgreich gesendet.'
+            : `✕ ${j.error||'Telegram-Test fehlgeschlagen'}`;
+
+        rEl.className=`action-result ${j.ok?'good':'bad'}`;
+
+        if(j.ok){
+            await load();
+        }
+    }catch(e){
+        rEl.textContent=`✕ ${e.message||'Telegram-Test fehlgeschlagen'}`;
+        rEl.className='action-result bad';
+    }finally{
+        b.disabled=false;
+    }
+});
 document.querySelector('#resetAvailability').onclick=async()=>{if(!confirm('Verfügbarkeitsstatistik wirklich zurücksetzen? Überwachungszeit, Downtime und Ausfallzähler aller Nodes werden gelöscht. Andere Historien bleiben erhalten.'))return;const b=document.querySelector('#resetAvailability'),rEl=document.querySelector('#availabilityResetResult');b.disabled=true;rEl.textContent='Statistik wird zurückgesetzt…';try{const r=await fetch('/api/availability/reset',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN}}),j=await r.json();rEl.textContent=j.ok?'✓ Verfügbarkeitsstatistik zurückgesetzt. Die Messung beginnt jetzt neu.':`✕ ${j.error||'Zurücksetzen fehlgeschlagen'}`;rEl.className=`action-result ${j.ok?'good':'bad'}`}finally{b.disabled=false}};
 function configForm(file){const fd=new FormData();fd.append('file',file);return fd}function changeList(group){const p=[];if(group.added?.length)p.push(`+ ${group.added.join(', ')}`);if(group.removed?.length)p.push(`− ${group.removed.join(', ')}`);if(group.changed?.length)p.push(`geändert: ${group.changed.join(', ')}`);return p.length?p.join(' · '):'keine Änderungen'}function clearConfigImport(){pendingConfigFile=null;document.querySelector('#configImportFile').value='';document.querySelector('#configImportPreview').textContent='';document.querySelector('#configImportPreview').className='action-result';document.querySelector('#configImportActions').hidden=true}
 document.querySelector('#selectConfigImport').onclick=()=>document.querySelector('#configImportFile').click();document.querySelector('#cancelConfigImport').onclick=clearConfigImport;document.querySelector('#configImportFile').onchange=async e=>{const file=e.target.files?.[0],out=document.querySelector('#configImportPreview'),actions=document.querySelector('#configImportActions');if(!file)return;pendingConfigFile=null;actions.hidden=true;out.textContent='Konfiguration wird geprüft…';out.className='action-result';try{const r=await fetch('/api/config/import/preview',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN},body:configForm(file)}),j=await r.json();if(!r.ok||!j.valid)throw new Error((j.errors||[j.error||'Konfiguration ungültig']).join('\n'));pendingConfigFile=file;const warnings=(j.warnings||[]).length?`\nWarnungen: ${(j.warnings||[]).join(' · ')}`:'';out.textContent=`✓ Konfiguration gültig.\nNodes: ${j.summary.nodes} · VRRP: ${j.summary.vrrp} · Intervall: ${j.summary.refresh_seconds} s\nNodes: ${changeList(j.changes.nodes)}\nVRRP: ${changeList(j.changes.vrrp)}${j.changes.refresh_changed?'\nMonitoring-Intervall wird geändert.':''}${warnings}`;out.className=`action-result ${(j.warnings||[]).length?'warn':'good'}`;actions.hidden=false}catch(err){out.textContent=`✕ Import nicht möglich:\n${err.message}`;out.className='action-result bad'}};

@@ -26,18 +26,87 @@ def audited_maintenance(name):
     return response
 
 def audited_settings():
-    # Capture only non-sensitive field names and selected boolean/numeric values.
-    # SMTP host/user/from/to and especially passwords are intentionally never written to audit details.
-    try:payload=request.get_json(silent=True) or {}
-    except Exception:payload={}
-    safe_keys={'mail_enabled','node_down','recovery_mail','failures_before_alert','smtp_port','smtp_security'}
-    changed_fields=sorted(k for k in payload if k!='smtp_password')
-    safe_values={k:payload.get(k) for k in safe_keys if k in payload}
-    password_changed=bool(str(payload.get('smtp_password','')))
-    response=_original_settings();status,data=_response_data(response)
-    details={'changed_fields':changed_fields,'safe_values':safe_values,'smtp_password_changed':password_changed}
-    if status<400 and data.get('ok'):_audit('settings.update','notifications','success',details)
-    else:_audit('settings.update','notifications','failed',{**details,'error':data.get('error') or f'HTTP {status}'})
+    # Nur nicht-sensitive Feldnamen und ausgewählte ungefährliche
+    # Werte werden im Audit-Log gespeichert.
+    #
+    # SMTP-Passwort, Telegram Bot-Token sowie Zielinformationen
+    # werden niemals in Audit-Details geschrieben.
+    try:
+        payload = request.get_json(silent=True) or {}
+    except Exception:
+        payload = {}
+
+    secret_keys = {
+        'smtp_password',
+        'telegram_bot_token',
+    }
+
+    sensitive_keys = {
+        'smtp_host',
+        'smtp_username',
+        'mail_from',
+        'mail_to',
+        'telegram_chat_id',
+    }
+
+    safe_keys = {
+        'mail_enabled',
+        'node_down',
+        'recovery_mail',
+        'failures_before_alert',
+        'smtp_port',
+        'smtp_security',
+        'telegram_enabled',
+    }
+
+    changed_fields = sorted(
+        k
+        for k in payload
+        if k not in secret_keys | sensitive_keys
+    )
+
+    safe_values = {
+        k: payload.get(k)
+        for k in safe_keys
+        if k in payload
+    }
+
+    smtp_password_changed = bool(
+        str(payload.get('smtp_password', ''))
+    )
+
+    telegram_bot_token_changed = bool(
+        str(payload.get('telegram_bot_token', ''))
+    )
+
+    response = _original_settings()
+    status, data = _response_data(response)
+
+    details = {
+        'changed_fields': changed_fields,
+        'safe_values': safe_values,
+        'smtp_password_changed': smtp_password_changed,
+        'telegram_bot_token_changed': telegram_bot_token_changed,
+    }
+
+    if status < 400 and data.get('ok'):
+        _audit(
+            'settings.update',
+            'notifications',
+            'success',
+            details,
+        )
+    else:
+        _audit(
+            'settings.update',
+            'notifications',
+            'failed',
+            {
+                **details,
+                'error': data.get('error') or f'HTTP {status}',
+            },
+        )
+
     return response
 
 def init_audit_integration(core):
