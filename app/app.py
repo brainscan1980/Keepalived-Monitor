@@ -234,37 +234,201 @@ def fmt_duration(start,end):
 def notification_cfg():
     s=load_settings();return {'enabled':bool(s.get('node_down',True)),'failures_before_alert':max(1,min(20,int(s.get('failures_before_alert',3)))),'recovery_mail':bool(s.get('recovery_mail',True))}
 def notification_status(name):
-    st=notification_cfg();maintenance=maintenance_info(name)
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
-    return {'enabled':mail_enabled() and st['enabled'] and not maintenance['active'],'suppressed':maintenance['active'],'failures':r[0] if r else 0,'is_down':bool(r[1]) if r else False,'down_since':r[2] if r else None,'last_alert':r[3] if r else None,'last_recovery':r[4] if r else None,'failures_before_alert':st['failures_before_alert']}
+    st = notification_cfg()
+    maintenance = maintenance_info(name)
+    s = load_settings()
+
+    channel_enabled = bool(
+        s.get('mail_enabled') or s.get('telegram_enabled')
+    )
+
+    with sqlite3.connect(DB) as c:
+        r = c.execute(
+            '''
+            SELECT failures,is_down,down_since,last_alert,last_recovery
+            FROM node_alert_state
+            WHERE name=?
+            ''',
+            (name,)
+        ).fetchone()
+
+    return {
+        'enabled': (
+            channel_enabled
+            and st['enabled']
+            and not maintenance['active']
+        ),
+        'suppressed': maintenance['active'],
+        'failures': r[0] if r else 0,
+        'is_down': bool(r[1]) if r else False,
+        'down_since': r[2] if r else None,
+        'last_alert': r[3] if r else None,
+        'last_recovery': r[4] if r else None,
+        'failures_before_alert': st['failures_before_alert'],
+    }
+def send_node_notification(kind, name, node, now, down_since=None, failures=None):
+    s = load_settings()
+
+    if kind == 'RECOVERY':
+        subject = f'🟢 Keepalived Monitor – {name} wieder ONLINE'
+        body = (
+            f'Node: {name}\n'
+            f'Host: {node["host"]}\n'
+            'Status: ONLINE\n'
+            f'Zeitpunkt: {now}\n'
+            f'Ausfallzeit: {fmt_duration(down_since, now)}'
+        )
+    elif kind == 'NODE DOWN':
+        subject = f'🔴 Keepalived Monitor – Node DOWN: {name}'
+        body = (
+            f'Node: {name}\n'
+            f'Host: {node["host"]}\n'
+            'Status: NICHT ERREICHBAR\n'
+            f'Zeitpunkt: {now}\n'
+            f'Fehlgeschlagene Prüfungen: {failures}'
+        )
+    else:
+        raise ValueError(f'Unbekannter Benachrichtigungstyp: {kind}')
+
+    # E-Mail ist ein unabhängiger Kanal.
+    if s.get('mail_enabled'):
+        try:
+            send_mail(subject, body)
+            record_notification(kind, name, True, ts=now)
+        except Exception as e:
+            record_notification(kind, name, False, e, now)
+            print(f'mail notification error {name}: {e}', flush=True)
+
+    # Telegram ist ebenfalls unabhängig.
+    if s.get('telegram_enabled'):
+        try:
+            send_telegram(f'{subject}\n\n{body}')
+        except Exception as e:
+            print(f'telegram notification error {name}: {e}', flush=True)
 def process_node_notifications(nodes):
-    st=notification_cfg()
-    if not st['enabled']:return
-    now=datetime.now().isoformat(timespec='seconds')
+    st = notification_cfg()
+
+    if not st['enabled']:
+        return
+
+    now = datetime.now().isoformat(timespec='seconds')
+
     with notification_lock:
-        for name,node in nodes.items():
+        for name, node in nodes.items():
+            notification = None
+
             if maintenance_info(name)['active']:
-                with sqlite3.connect(DB) as c:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,0,0) ON CONFLICT(name) DO UPDATE SET failures=0,is_down=0,down_since=NULL',(name,))
+                with sqlite3.connect(DB) as c:
+                    c.execute(
+                        '''
+                        INSERT INTO node_alert_state(name,failures,is_down)
+                        VALUES(?,0,0)
+                        ON CONFLICT(name) DO UPDATE SET
+                            failures=0,
+                            is_down=0,
+                            down_since=NULL
+                        ''',
+                        (name,)
+                    )
                 continue
+
             with sqlite3.connect(DB) as c:
-                r=c.execute('SELECT failures,is_down,down_since,last_alert,last_recovery FROM node_alert_state WHERE name=?',(name,)).fetchone()
-                if r is None:c.execute('INSERT INTO node_alert_state(name,failures,is_down) VALUES(?,?,?)',(name,0 if node['online'] else 1,0));continue
-                failures,is_down,down_since,_,_=r
+                r = c.execute(
+                    '''
+                    SELECT failures,is_down,down_since,last_alert,last_recovery
+                    FROM node_alert_state
+                    WHERE name=?
+                    ''',
+                    (name,)
+                ).fetchone()
+
+                if r is None:
+                    c.execute(
+                        '''
+                        INSERT INTO node_alert_state(name,failures,is_down)
+                        VALUES(?,?,?)
+                        ''',
+                        (name, 0 if node['online'] else 1, 0)
+                    )
+                    continue
+
+                failures, is_down, down_since, _, _ = r
+
                 if node['online']:
                     if is_down:
-                        if mail_enabled() and st['recovery_mail']:
-                            try:send_mail(f'🟢 Keepalived Monitor – {name} wieder ONLINE',f'Node: {name}\nHost: {node["host"]}\nStatus: ONLINE\nZeitpunkt: {now}\nAusfallzeit: {fmt_duration(down_since,now)}');record_notification('RECOVERY',name,True,ts=now)
-                            except Exception as e:record_notification('RECOVERY',name,False,e,now);print(f'mail recovery error {name}: {e}',flush=True);continue
-                        c.execute('UPDATE node_alert_state SET failures=0,is_down=0,down_since=NULL,last_recovery=? WHERE name=?',(now,name))
-                    elif failures:c.execute('UPDATE node_alert_state SET failures=0 WHERE name=?',(name,))
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=0,
+                                is_down=0,
+                                down_since=NULL,
+                                last_recovery=?
+                            WHERE name=?
+                            ''',
+                            (now, name)
+                        )
+
+                        if st['recovery_mail']:
+                            notification = {
+                                'kind': 'RECOVERY',
+                                'down_since': down_since,
+                            }
+
+                    elif failures:
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=0
+                            WHERE name=?
+                            ''',
+                            (name,)
+                        )
+
                 else:
-                    failures+=1
-                    if not is_down and failures>=st['failures_before_alert']:
-                        if mail_enabled():
-                            try:send_mail(f'🔴 Keepalived Monitor – Node DOWN: {name}',f'Node: {name}\nHost: {node["host"]}\nStatus: NICHT ERREICHBAR\nZeitpunkt: {now}\nFehlgeschlagene Prüfungen: {failures}');record_notification('NODE DOWN',name,True,ts=now)
-                            except Exception as e:record_notification('NODE DOWN',name,False,e,now);print(f'mail alert error {name}: {e}',flush=True);c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name));continue
-                        c.execute('UPDATE node_alert_state SET failures=?,is_down=1,down_since=?,last_alert=? WHERE name=?',(failures,now,now,name))
-                    else:c.execute('UPDATE node_alert_state SET failures=? WHERE name=?',(failures,name))
+                    failures += 1
+
+                    if (
+                        not is_down
+                        and failures >= st['failures_before_alert']
+                    ):
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=?,
+                                is_down=1,
+                                down_since=?,
+                                last_alert=?
+                            WHERE name=?
+                            ''',
+                            (failures, now, now, name)
+                        )
+
+                        notification = {
+                            'kind': 'NODE DOWN',
+                            'failures': failures,
+                        }
+
+                    else:
+                        c.execute(
+                            '''
+                            UPDATE node_alert_state
+                            SET failures=?
+                            WHERE name=?
+                            ''',
+                            (failures, name)
+                        )
+
+            # Wichtig:
+            # Erst hier ist die vorherige SQLite-Transaktion beendet.
+            if notification:
+                send_node_notification(
+                    notification['kind'],
+                    name,
+                    node,
+                    now,
+                    down_since=notification.get('down_since'),
+                    failures=notification.get('failures'),
+                )
 def poll_node(node):
     cmd="printf 'KEEP='; systemctl is-active keepalived 2>/dev/null || true; printf 'UP='; uptime -p 2>/dev/null || true; printf 'ADDR='; ip -j addr show 2>/dev/null || true";rc,out,err=ssh(node,cmd);d={'name':node['name'],'host':node['host'],'online':rc==0,'keepalived':'unknown','uptime':'-','addresses':[],'error':err if rc else ''}
     if rc:return d
