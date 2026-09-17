@@ -50,6 +50,7 @@ def audited_settings():
     }
 
     safe_keys = {
+        'notifications_enabled',
         'mail_enabled',
         'node_down',
         'recovery_mail',

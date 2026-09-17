@@ -1,50 +1,98 @@
 function initSidebar(){const shell=document.querySelector('.app-shell'),collapse=document.querySelector('#sidebarCollapse'),menu=document.querySelector('#mobileMenu'),overlay=document.querySelector('#sidebarOverlay');const desktop=()=>innerWidth>900;if(desktop()&&localStorage.getItem('sidebarCollapsed')==='1')shell.classList.add('sidebar-collapsed');collapse?.addEventListener('click',()=>{shell.classList.toggle('sidebar-collapsed');localStorage.setItem('sidebarCollapsed',shell.classList.contains('sidebar-collapsed')?'1':'0')});const mobile=o=>{shell.classList.toggle('sidebar-open',o);menu.textContent=o?'✕':'☰'};menu?.addEventListener('click',()=>mobile(!shell.classList.contains('sidebar-open')));overlay?.addEventListener('click',()=>mobile(false))}
 const systemDark=matchMedia('(prefers-color-scheme: dark)'),getTheme=()=>localStorage.getItem('theme')||'auto';function applyTheme(m=getTheme()){document.documentElement.classList.toggle('dark',m==='dark'||(m==='auto'&&systemDark.matches));document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===m))}document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)});initSidebar();applyTheme();
-const ids=['mail_enabled','node_down','recovery_mail','failures_before_alert','smtp_host','smtp_port','smtp_security','smtp_username','mail_from','mail_to','telegram_enabled','telegram_chat_id'];let current={},pendingConfigFile=null,failoverPreflight=null;const fmt=v=>v?new Date(v).toLocaleString():'–';const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ids=[
+    'notifications_enabled',
+    'node_down',
+    'recovery_mail',
+    'failures_before_alert',
+    'mail_enabled',
+    'mail_to',
+    'smtp_host',
+    'smtp_port',
+    'smtp_security',
+    'smtp_username',
+    'mail_from',
+    'telegram_enabled',
+    'telegram_chat_id'
+];let current={},pendingConfigFile=null,failoverPreflight=null;const fmt=v=>v?new Date(v).toLocaleString():'–';const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function summary(s){
-    document.querySelector('#settingsStatus').innerHTML=`
-        <div>
-            <span class="dot ${s.mail_enabled?'good':'unknown'}"></span>
-            <b>E-Mail: ${s.mail_enabled?'Aktiv':'Inaktiv'}</b>
-        </div>
-        <div>
-            SMTP: <b>${s.smtp_host&&s.mail_from&&s.mail_to?'Konfiguriert':'Unvollständig'}</b>
-        </div>
-        <div>
-            SMTP-Passwort: <b>${s.smtp_password_set?'Gespeichert':'Nicht gesetzt'}</b>
-        </div>
-        <div>
-            Letzte Testmail:
-            <b class="${s.last_test_ok===true?'good':s.last_test_ok===false?'bad':'unknown'}">
-                ${fmt(s.last_test)}
-                ${s.last_test_ok===true?' · Erfolgreich':s.last_test_ok===false?' · Fehlgeschlagen':''}
-            </b>
-        </div>
-        <div>
-            <span class="dot ${s.telegram_enabled?'good':'unknown'}"></span>
-            <b>Telegram: ${s.telegram_enabled?'Aktiv':'Inaktiv'}</b>
-        </div>
-        <div>
-            Telegram-Token: <b>${s.telegram_bot_token_set?'Gespeichert':'Nicht gesetzt'}</b>
-        </div>
-        <div>
-            Telegram Chat-ID: <b>${s.telegram_chat_id?'Konfiguriert':'Nicht gesetzt'}</b>
-        </div>
-        <div>
-            Letzter Telegram-Test:
-            <b class="${s.telegram_last_test_ok===true?'good':s.telegram_last_test_ok===false?'bad':'unknown'}">
-                ${fmt(s.telegram_last_test)}
-                ${s.telegram_last_test_ok===true?' · Erfolgreich':s.telegram_last_test_ok===false?' · Fehlgeschlagen':''}
-            </b>
-        </div>
-    `;
-    const tokenStatus=document.querySelector('#telegramTokenStatus');
-    if(tokenStatus){
-        tokenStatus.textContent=s.telegram_bot_token_set
-            ? '✓ Ein Bot-Token ist verschlüsselt gespeichert. Das Feld leer lassen, um ihn beizubehalten.'
-            : 'Noch kein Bot-Token gespeichert.';
-        tokenStatus.className=`meta ${s.telegram_bot_token_set?'good':''}`;
+    const emailStatus=document.querySelector('#emailActiveStatus');
+    const smtpPasswordStatus=document.querySelector('#smtpPasswordStatus');
+    const telegramStatus=document.querySelector('#telegramActiveStatus');
+    const telegramChatStatus=document.querySelector('#telegramChatStatus');
+    const telegramTokenStatus=document.querySelector('#telegramTokenStatus');
+
+	if(emailStatus){
+		const active=
+			s.notifications_enabled &&
+			s.mail_enabled;
+
+		emailStatus.innerHTML=`
+			<span class="dot ${active?'good':'unknown'}"></span>
+			<b>${
+				active
+					? 'E-Mail aktiv'
+					: !s.notifications_enabled
+						? 'E-Mail deaktiviert (Benachrichtigungen aus)'
+						: 'E-Mail inaktiv'
+			}</b>
+		`;
+	}
+
+    if(smtpPasswordStatus){
+        smtpPasswordStatus.innerHTML=s.smtp_password_set
+            ? '<span class="status-check">✓</span> <b>SMTP-Passwort gespeichert</b>'
+            : '<span class="status-empty">○</span> <b>SMTP-Passwort nicht gespeichert</b>';
     }
+
+	if(telegramStatus){
+		const active=
+			s.notifications_enabled &&
+			s.telegram_enabled;
+
+		telegramStatus.innerHTML=`
+			<span class="dot ${active?'good':'unknown'}"></span>
+			<b>${
+				active
+					? 'Telegram aktiv'
+					: !s.notifications_enabled
+						? 'Telegram deaktiviert (Benachrichtigungen aus)'
+						: 'Telegram inaktiv'
+			}</b>
+		`;
+	}
+
+    if(telegramChatStatus){
+        telegramChatStatus.innerHTML=s.telegram_chat_id
+            ? '<span class="status-check">✓</span> <b>Telegram-Chat-ID konfiguriert</b>'
+            : '<span class="status-empty">○</span> <b>Telegram-Chat-ID nicht konfiguriert</b>';
+    }
+
+    if(telegramTokenStatus){
+        telegramTokenStatus.innerHTML=s.telegram_bot_token_set
+            ? '<span class="status-check">✓</span> <b>Bot-Token gespeichert</b>'
+            : '<span class="status-empty">○</span> <b>Bot-Token nicht gespeichert</b>';
+    }
+}
+function updateNotificationControls(){
+    const master=document.querySelector('#notifications_enabled');
+    const enabled=!!master?.checked;
+
+    const emailSection=document.querySelector('#emailSettingsSection');
+    const telegramSection=document.querySelector('#telegramSettingsSection');
+
+    [emailSection,telegramSection].forEach(section=>{
+        if(!section)return;
+
+        section.classList.toggle(
+            'notification-channel-disabled',
+            !enabled
+        );
+
+        section.querySelectorAll('input,select,button').forEach(el=>{
+            el.disabled=!enabled;
+        });
+    });
 }
 async function loadHistory(){const el=document.querySelector('#notificationHistory');if(!el)return;el.innerHTML='<div class="meta">Benachrichtigungs-Historie wird geladen…</div>';try{const r=await fetch('/api/notifications/history',{cache:'no-store'});if(!r.ok){if(r.status===404){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}throw new Error(`HTTP ${r.status}`)}const h=await r.json();if(!Array.isArray(h)||!h.length){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}el.innerHTML=h.map(x=>`<div class="row history-row"><span>${esc(fmt(x.ts))}</span><b>${esc(x.type||'MAIL')}</b><span>${esc(x.node||'–')}</span><span class="${x.ok?'good':'bad'}"><b>${x.ok?'ERFOLGREICH':'FEHLGESCHLAGEN'}</b>${x.error?`<div class="meta">${esc(x.error)}</div>`:''}</span></div>`).join('')}catch(e){el.innerHTML='<div class="meta bad"><b>Historie konnte nicht geladen werden.</b><br>Bitte die Seite später erneut laden.</div>'}}
 function bytes(n){if(n==null)return'–';if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}function diffShort(c){if(!c)return'';const n=c.nodes||{},v=c.vrrp||{},parts=[];if(n.added?.length)parts.push(`Nodes +${n.added.length}`);if(n.removed?.length)parts.push(`Nodes −${n.removed.length}`);if(n.changed?.length)parts.push(`Nodes geändert ${n.changed.length}`);if(v.added?.length)parts.push(`VRRP +${v.added.length}`);if(v.removed?.length)parts.push(`VRRP −${v.removed.length}`);if(v.changed?.length)parts.push(`VRRP geändert ${v.changed.length}`);if(c.refresh_changed)parts.push('Intervall geändert');return parts.length?parts.join(' · '):'entspricht der aktuellen Konfiguration'}
@@ -56,10 +104,92 @@ function failoverInstanceLine(i){const backups=(i.ready_backups||[]).join(', ')|
 async function loadFailoverPreflight(){const out=document.querySelector('#failoverPreflight'),btn=document.querySelector('#runFailoverTest');if(!out||!btn)return;btn.disabled=true;failoverPreflight=null;out.textContent='Preflight wird ausgeführt…';out.className='action-result';try{const r=await fetch('/api/failover-test/preflight',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Preflight fehlgeschlagen');failoverPreflight=j;const masters=j.summary?.masters||[],allSafe=j.safe_to_test&&j.summary?.blocked===0&&masters.length===1;out.textContent=`${allSafe?'✓':'✕'} ${j.summary?.testable||0}/${j.summary?.total||0} VRRP-Instanzen testbar · ${j.summary?.blocked||0} blockiert\n${masters.length?`Gemeinsamer MASTER: ${masters.join(', ')}`:'Kein eindeutiger gemeinsamer MASTER'}\n\n${(j.instances||[]).map(failoverInstanceLine).join('\n')}`;out.className=`action-result ${allSafe?'good':'bad'}`;btn.disabled=!allSafe}catch(e){out.textContent=`✕ ${e.message}`;out.className='action-result bad'}}
 function renderFailoverResult(j){const out=document.querySelector('#failoverTestResult'),lines=[];for(const s of j.steps||[])lines.push(`${s.ok?'✓':'✕'} ${s.message}`);if(j.failover?.instances?.length){lines.push('');for(const i of j.failover.instances)lines.push(`${i.moved?'✓':'✕'} ${i.name}: ${i.old_master||'–'} → ${i.new_master||'–'}${i.healthy?'':' · nicht gesund'}`)}lines.push('',j.ok?'✓ Automatischer Failover-Test erfolgreich abgeschlossen.':`✕ ${j.message||j.error||'Failover-Test nicht vollständig erfolgreich.'}`);if(j.error)lines.push(`Fehler: ${j.error}`);out.textContent=lines.join('\n');out.className=`action-result ${j.ok?'good':'bad'}`;out.scrollIntoView({behavior:'smooth',block:'nearest'})}
 async function runFailoverTest(){if(!failoverPreflight)return;const masters=failoverPreflight.summary?.masters||[];if(masters.length!==1)return;const master=masters[0],instances=(failoverPreflight.instances||[]).filter(i=>i.allowed&&i.master===master),names=instances.map(i=>i.name).join(', ');if(!confirm(`ECHTEN FAILOVER-TEST STARTEN?\n\nKeepalived auf ${master} wird vorübergehend gestoppt.\nBetroffen: ${names}\n${instances.length} VRRP-Instanz${instances.length===1?'':'en'} werden auf ihre Backup-Nodes umgeschaltet.\n\nAnschließend wird Keepalived auf ${master} automatisch wieder gestartet und der Clusterzustand geprüft.\n\nWährend des Tests kann es zu kurzen Dienstunterbrechungen kommen.`))return;const btn=document.querySelector('#runFailoverTest'),refresh=document.querySelector('#refreshFailoverPreflight'),out=document.querySelector('#failoverTestResult');btn.disabled=true;refresh.disabled=true;out.textContent=`Failover-Test läuft…\nKeepalived auf ${master} wird kontrolliert aus dem Cluster genommen. Bitte diese Seite nicht neu laden.`;out.className='action-result warn';try{const r=await fetch('/api/failover-test/run',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN,'X-Confirm-Failover-Test':'yes','X-Confirm-Failover-Master':master}}),j=await r.json();if(!r.ok&&!j.steps)throw new Error(j.error||'Failover-Test konnte nicht gestartet werden');renderFailoverResult(j)}catch(e){out.textContent=`✕ ${e.message}`;out.className='action-result bad'}finally{refresh.disabled=false;await loadFailoverPreflight()}}
-async function load(){current=await (await fetch('/api/settings',{cache:'no-store'})).json();ids.forEach(id=>{const e=document.querySelector('#'+id);if(e.type==='checkbox')e.checked=!!current[id];else e.value=current[id]??''});summary(current);await Promise.all([loadHistory(),loadBackups(),loadFailoverPreflight()])}
+async function load(){
+    current=await (
+        await fetch('/api/settings',{cache:'no-store'})
+    ).json();
+
+    ids.forEach(id=>{
+        const e=document.querySelector('#'+id);
+
+        if(!e)return;
+
+        if(e.type==='checkbox'){
+            e.checked=!!current[id];
+        }else{
+            e.value=current[id]??'';
+        }
+    });
+
+    updateNotificationControls();
+    summary(current);
+
+    await Promise.all([
+        loadHistory(),
+        loadBackups(),
+        loadFailoverPreflight()
+    ]);
+}
 document.querySelector('#refreshFailoverPreflight')?.addEventListener('click',loadFailoverPreflight);document.querySelector('#runFailoverTest')?.addEventListener('click',runFailoverTest);
-document.querySelector('#settingsForm').addEventListener('submit',async e=>{e.preventDefault();const result=document.querySelector('#settingsResult'),data={};ids.forEach(id=>{const el=document.querySelector('#'+id);data[id]=el.type==='checkbox'?el.checked:el.value});data.smtp_password=document.querySelector('#smtp_password').value;data.telegram_bot_token=document.querySelector('#telegram_bot_token').value;result.textContent='Speichere…';const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF_TOKEN},body:JSON.stringify(data)}),j=await r.json();result.textContent=j.ok?'✓ Einstellungen gespeichert.':`✕ ${j.error||'Speichern fehlgeschlagen'}`;result.className=`action-result ${j.ok?'good':'bad'}`;if(j.ok){document.querySelector('#smtp_password').value='';document.querySelector('#telegram_bot_token').value='';current=j.settings;summary(current)}});
+document.querySelector('#settingsForm').addEventListener('submit',async e=>{
+    e.preventDefault();
+
+    const result=document.querySelector('#settingsResult');
+    const data={};
+
+    ids.forEach(id=>{
+        const el=document.querySelector('#'+id);
+        data[id]=el.type==='checkbox'
+            ? el.checked
+            : el.value;
+    });
+
+    data.smtp_password=
+        document.querySelector('#smtp_password').value;
+
+    data.telegram_bot_token=
+        document.querySelector('#telegram_bot_token').value;
+
+    result.textContent='Speichere…';
+
+    const r=await fetch('/api/settings',{
+        method:'POST',
+        headers:{
+            'Content-Type':'application/json',
+            'X-CSRF-Token':CSRF_TOKEN
+        },
+        body:JSON.stringify(data)
+    });
+
+    const j=await r.json();
+
+    result.textContent=j.ok
+        ? '✓ Einstellungen gespeichert.'
+        : `✕ ${j.error||'Speichern fehlgeschlagen'}`;
+
+    result.className=
+        `action-result ${j.ok?'good':'bad'}`;
+
+    if(j.ok){
+        document.querySelector('#smtp_password').value='';
+        document.querySelector('#telegram_bot_token').value='';
+
+        current=j.settings;
+
+        updateNotificationControls();
+        summary(current);
+    }
+});
 document.querySelector('#testBtn').onclick=async()=>{const b=document.querySelector('#testBtn'),rEl=document.querySelector('#settingsResult');b.disabled=true;rEl.textContent='Testmail wird gesendet…';try{const r=await fetch('/api/notifications/test',{method:'POST',headers:{'X-CSRF-Token':CSRF_TOKEN}}),j=await r.json();rEl.textContent=j.ok?'✓ Testmail erfolgreich gesendet.':`✕ ${j.error||'Testmail fehlgeschlagen'}`;rEl.className=`action-result ${j.ok?'good':'bad'}`;await load()}finally{b.disabled=false}};
+document.querySelector('#notifications_enabled')
+    ?.addEventListener('change',()=>{
+        updateNotificationControls();
+        summary({
+            ...current,
+            notifications_enabled:
+                document.querySelector('#notifications_enabled').checked
+        });
+    });
 document.querySelector('#telegramTestBtn')?.addEventListener('click',async()=>{
     const b=document.querySelector('#telegramTestBtn');
     const rEl=document.querySelector('#telegramResult');

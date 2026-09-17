@@ -59,7 +59,37 @@ def availability_stats():
 def fernet():return Fernet(base64.urlsafe_b64encode(hashlib.sha256(str(app.secret_key).encode()).digest()))
 def env_bool(n,d=False):return os.getenv(n,str(d)).lower() in {'1','true','yes','on'}
 def defaults():
-    n=(cfg().get('notifications',{}).get('node_down',{}) or {});return {'mail_enabled':env_bool('MAIL_ENABLED'),'node_down':bool(n.get('enabled',True)),'recovery_mail':bool(n.get('recovery_mail',True)),'failures_before_alert':max(1,int(n.get('failures_before_alert',3))),'smtp_host':os.getenv('SMTP_HOST',''),'smtp_port':int(os.getenv('SMTP_PORT','587')),'smtp_security':os.getenv('SMTP_SECURITY','starttls').lower(),'smtp_username':os.getenv('SMTP_USERNAME',''),'smtp_password_enc':'','mail_from':os.getenv('MAIL_FROM',''),'mail_to':os.getenv('MAIL_TO',''),'last_test':None,'last_test_ok':None,'telegram_enabled':False,'telegram_bot_token_enc':'','telegram_chat_id':'','telegram_last_test':None,'telegram_last_test_ok':None,'maintenance_nodes':{}}
+    n = (cfg().get('notifications', {}).get('node_down', {}) or {})
+
+    return {
+        'notifications_enabled': True,
+        'mail_enabled': env_bool('MAIL_ENABLED'),
+        'node_down': bool(n.get('enabled', True)),
+        'recovery_mail': bool(n.get('recovery_mail', True)),
+        'failures_before_alert': max(
+            1,
+            int(n.get('failures_before_alert', 3))
+        ),
+        'smtp_host': os.getenv('SMTP_HOST', ''),
+        'smtp_port': int(os.getenv('SMTP_PORT', '587')),
+        'smtp_security': os.getenv(
+            'SMTP_SECURITY',
+            'starttls'
+        ).lower(),
+        'smtp_username': os.getenv('SMTP_USERNAME', ''),
+        'smtp_password_enc': '',
+        'mail_from': os.getenv('MAIL_FROM', ''),
+        'mail_to': os.getenv('MAIL_TO', ''),
+        'last_test': None,
+        'last_test_ok': None,
+        'telegram_enabled': False,
+        'telegram_bot_token_enc': '',
+        'telegram_chat_id': '',
+        'telegram_last_test': None,
+        'telegram_last_test_ok': None,
+        'maintenance_nodes': {},
+    }
+
 def load_settings():
     s=defaults()
     with settings_lock:
@@ -232,7 +262,23 @@ def fmt_duration(start,end):
         return ' '.join(p)
     except Exception:return 'unbekannt'
 def notification_cfg():
-    s=load_settings();return {'enabled':bool(s.get('node_down',True)),'failures_before_alert':max(1,min(20,int(s.get('failures_before_alert',3)))),'recovery_mail':bool(s.get('recovery_mail',True))}
+    s = load_settings()
+
+    return {
+        'notifications_enabled': bool(
+            s.get('notifications_enabled', True)
+        ),
+        'node_down': bool(
+            s.get('node_down', True)
+        ),
+        'failures_before_alert': max(
+            1,
+            min(20, int(s.get('failures_before_alert', 3)))
+        ),
+        'recovery_mail': bool(
+            s.get('recovery_mail', True)
+        ),
+    }
 def notification_status(name):
     st = notification_cfg()
     maintenance = maintenance_info(name)
@@ -255,7 +301,11 @@ def notification_status(name):
     return {
         'enabled': (
             channel_enabled
-            and st['enabled']
+            and st['notifications_enabled']
+            and (
+                st['node_down']
+                or st['recovery_mail']
+            )
             and not maintenance['active']
         ),
         'suppressed': maintenance['active'],
@@ -308,7 +358,10 @@ def send_node_notification(kind, name, node, now, down_since=None, failures=None
 def process_node_notifications(nodes):
     st = notification_cfg()
 
-    if not st['enabled']:
+    if not st['notifications_enabled']:
+        return
+
+    if not st['node_down'] and not st['recovery_mail']:
         return
 
     now = datetime.now().isoformat(timespec='seconds')
@@ -403,10 +456,11 @@ def process_node_notifications(nodes):
                             (failures, now, now, name)
                         )
 
-                        notification = {
-                            'kind': 'NODE DOWN',
-                            'failures': failures,
-                        }
+                        if st['node_down']:
+                            notification = {
+                                'kind': 'NODE DOWN',
+                                'failures': failures,
+                            }
 
                     else:
                         c.execute(
@@ -560,6 +614,9 @@ def update_settings():
 
         s.update(
             mail_enabled=bool(d.get('mail_enabled')),
+            notifications_enabled=bool(
+                d.get('notifications_enabled', True)
+            ),
             node_down=bool(d.get('node_down')),
             recovery_mail=bool(d.get('recovery_mail')),
             failures_before_alert=failures,
