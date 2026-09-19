@@ -62,11 +62,13 @@ Verfügbare Zeitfenster:
 - **7 Tage**
 - **30 Tage**
 
-Erfasst werden unter anderem Node-Verfügbarkeit, Keepalived-Verfügbarkeit, Wartungszeiten, VRRP-Gesundheit und MASTER-Zustände. Die Messwerte werden minütlich erfasst und bis zu 32 Tage vorgehalten. Historische Statistikdaten können über die Oberfläche zurückgesetzt werden.
+Erfasst werden unter anderem Node-Verfügbarkeit, Keepalived-Verfügbarkeit, Wartungszeiten, VRRP-Gesundheit und MASTER-Zustände. VRRP-Ereignisse werden dabei zentral klassifiziert, sodass echte MASTER-Wechsel, fehlender MASTER und Split-Brain-Zustände getrennt ausgewertet werden können. Die Messwerte werden minütlich erfasst und bis zu 32 Tage vorgehalten. Historische Statistikdaten können über die Oberfläche zurückgesetzt werden.
 
 ### 🔄 VRRP- und Failover-Monitoring
 
-Keepalived Monitor prüft regelmäßig, welcher Node die konfigurierte VIP besitzt. MASTER-Wechsel, Verlust einer VIP und Wiederherstellungen werden erkannt und protokolliert.
+Keepalived Monitor prüft regelmäßig, welcher Node die konfigurierte VIP besitzt. VRRP-Zustandsänderungen werden zentral klassifiziert und als **MASTER-Wechsel**, **kein MASTER**, **Split-Brain**, **MASTER wiederhergestellt** oder **Split-Brain behoben** protokolliert.
+
+Dashboard, Statistik, Ereignishistorie und Benachrichtigungen verwenden dieselbe Ereignisklassifizierung. Dadurch werden reguläre Failover-Vorgänge von kritischen VRRP-Zuständen und deren Wiederherstellung unterschieden.
 
 Damit lassen sich beispielsweise folgende HA-Dienste überwachen:
 
@@ -123,15 +125,24 @@ Unterstützte Ereignisse:
 
 - Node-Ausfall
 - Wiederherstellung eines Nodes
+- VRRP-MASTER-Wechsel
+- kein VRRP-MASTER vorhanden
+- Split-Brain / mehrere MASTER
+- Wiederherstellung eines MASTERs
+- Auflösung eines Split-Brain-Zustands
 
 Konfigurierbar sind unter anderem:
 
 - Benachrichtigungen global aktiv/inaktiv
 - Node-DOWN-Benachrichtigungen
 - Node-ONLINE-/Recovery-Benachrichtigungen
+- VRRP-Failover-Benachrichtigungen
+- VRRP-Health-Benachrichtigungen
 - Anzahl fehlgeschlagener Prüfungen bis zur Alarmierung
 - E-Mail aktiv/inaktiv
 - Telegram aktiv/inaktiv
+
+Die Detailoptionen eines Benachrichtigungskanals werden in der Einstellungsseite nur eingeblendet, wenn der jeweilige Kanal aktiviert ist.
 
 E-Mail- und Telegram-Benachrichtigungen können gleichzeitig verwendet werden.
 
@@ -151,7 +162,11 @@ Der Bot-Token wird verschlüsselt gespeichert und nach dem Speichern nicht wiede
 
 Relevante VRRP- und Cluster-Ereignisse werden persistent gespeichert. Das Dashboard zeigt die neuesten Ereignisse; eine eigene Ereignisseite bietet eine paginierte Historie mit 10, 20, 50 oder 100 Einträgen pro Seite.
 
-Historieneinträge können gelöscht werden, ohne die internen VRRP-Failover-Zähler zu zerstören.
+Die Historie kann nach **Alle**, **VRRP**, **Nodes** und **Wartung** gefiltert werden. Die Filterung erfolgt serverseitig vor der Pagination, sodass Seitenanzahl und Eintragszähler immer zur gewählten Kategorie passen.
+
+VRRP-Ereignisse werden mit verständlichen Bezeichnungen wie **MASTER-Wechsel**, **Kein MASTER**, **Split-Brain**, **MASTER wiederhergestellt** und **Split-Brain behoben** dargestellt.
+
+Historieneinträge können gelöscht werden, ohne die internen VRRP-Ereigniszähler zu zerstören.
 
 ### 📦 Konfigurations-Export, Import und Backups
 
