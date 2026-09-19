@@ -604,3 +604,13 @@ Bitte niemals Passwörter, private SSH-Keys, Session-Secrets oder andere Zugangs
   <strong>Keepalived Monitor</strong><br>
   Monitor your VRRP cluster. See the MASTER. Know your redundancy.
 </p>
+
+---
+
+## 📄 Lizenz
+
+Keepalived Monitor wird unter der **MIT License** veröffentlicht.
+
+Die Software darf frei verwendet, kopiert, verändert und weitergegeben werden – auch für kommerzielle Zwecke. Der Copyright- und Lizenzhinweis muss dabei erhalten bleiben.
+
+Weitere Informationen findest du in der Datei [LICENSE](LICENSE).
