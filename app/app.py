@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request, redirect, session, u
 from cryptography.fernet import Fernet, InvalidToken
 import yaml
 from cluster_validation import validate_cluster
+from vrrp_events import classify_vrrp_event, is_vrrp_health_event
 
 app=Flask(__name__)
 app.secret_key=os.getenv('SECRET_KEY') or secrets.token_hex(32)
@@ -66,6 +67,8 @@ def defaults():
         'mail_enabled': env_bool('MAIL_ENABLED'),
         'node_down': bool(n.get('enabled', True)),
         'recovery_mail': bool(n.get('recovery_mail', True)),
+        'vrrp_failover': True,
+        'vrrp_health': True,
         'failures_before_alert': max(
             1,
             int(n.get('failures_before_alert', 3))
@@ -263,7 +266,6 @@ def fmt_duration(start,end):
     except Exception:return 'unbekannt'
 def notification_cfg():
     s = load_settings()
-
     return {
         'notifications_enabled': bool(
             s.get('notifications_enabled', True)
@@ -277,6 +279,12 @@ def notification_cfg():
         ),
         'recovery_mail': bool(
             s.get('recovery_mail', True)
+        ),
+        'vrrp_failover': bool(
+            s.get('vrrp_failover', True)
+        ),
+        'vrrp_health': bool(
+            s.get('vrrp_health', True)
         ),
     }
 def notification_status(name):
@@ -355,6 +363,91 @@ def send_node_notification(kind, name, node, now, down_since=None, failures=None
             send_telegram(f'{subject}\n\n{body}')
         except Exception as e:
             print(f'telegram notification error {name}: {e}', flush=True)
+def send_vrrp_notification(name, old_master, new_master, now):
+    s = load_settings()
+
+    if not s.get('notifications_enabled', True):
+        return
+
+    event_type = classify_vrrp_event(old_master, new_master)
+
+    if is_vrrp_health_event(old_master, new_master):
+
+        if not s.get('vrrp_health', True):
+            return
+    else:
+        if not s.get('vrrp_failover', True):
+            return
+
+    if event_type == 'SPLIT_BRAIN':
+        subject = f'🔴 Keepalived Monitor – Mehrere VRRP MASTER: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Vorheriger Zustand: {old_master}\n'
+            'Neuer Zustand: MEHRERE MASTER\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP MULTIPLE'
+
+    elif event_type == 'NO_MASTER':
+        subject = f'🔴 Keepalived Monitor – Kein VRRP MASTER: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            'Neuer MASTER: KEIN MASTER\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP NO MASTER'
+
+    elif event_type == 'NORMALIZED':
+        subject = f'🟢 Keepalived Monitor – VRRP MASTER-Zustand normalisiert: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            'Vorheriger Zustand: MEHRERE MASTER\n'
+            f'Aktueller MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP NORMALIZED'
+
+    elif event_type == 'RECOVERY':
+        subject = f'🟢 Keepalived Monitor – VRRP MASTER wieder verfügbar: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            f'Neuer MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP RECOVERY'
+
+    else:
+        subject = f'🔄 Keepalived Monitor – VRRP MASTER-Wechsel: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            f'Neuer MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP FAILOVER'
+
+    if s.get('mail_enabled'):
+        try:
+            send_mail(subject, body)
+            record_notification(kind, name, True, ts=now)
+        except Exception as e:
+            record_notification(kind, name, False, e, now)
+            print(
+                f'mail VRRP notification error {name}: {e}',
+                flush=True
+            )
+
+    if s.get('telegram_enabled'):
+        try:
+            send_telegram(f'{subject}\n\n{body}')
+        except Exception as e:
+            print(
+                f'telegram VRRP notification error {name}: {e}',
+                flush=True
+            )
 def process_node_notifications(nodes):
     st = notification_cfg()
 
@@ -495,16 +588,96 @@ def poll_node(node):
                     for a in itf.get('addr_info',[]):d['addresses'].append(a.get('local'))
             except Exception:pass
     return d
-def record(name,new):
+def record(name, new):
+    event = None
+
     with sqlite3.connect(DB) as c:
-        r=c.execute('SELECT master FROM state WHERE name=?',(name,)).fetchone();old=r[0] if r else None
-        if old!=new:
-            if r:c.execute('UPDATE state SET master=? WHERE name=?',(new,name))
-            else:c.execute('INSERT INTO state(name,master) VALUES(?,?)',(name,new))
-            if old is not None:c.execute('INSERT INTO events(ts,name,old_master,new_master) VALUES(?,?,?,?)',(datetime.now().isoformat(timespec='seconds'),name,old,new))
+        r = c.execute(
+            'SELECT master FROM state WHERE name=?',
+            (name,)
+        ).fetchone()
+
+        old = r[0] if r else None
+
+        if old != new:
+            if r:
+                c.execute(
+                    'UPDATE state SET master=? WHERE name=?',
+                    (new, name)
+                )
+            else:
+                c.execute(
+                    'INSERT INTO state(name,master) VALUES(?,?)',
+                    (name, new)
+                )
+
+            if old is not None:
+                now = datetime.now().isoformat(timespec='seconds')
+
+                c.execute(
+                    '''
+                    INSERT INTO events(ts,name,old_master,new_master)
+                    VALUES(?,?,?,?)
+                    ''',
+                    (now, name, old, new)
+                )
+
+                event = {
+                    'name': name,
+                    'old_master': old,
+                    'new_master': new,
+                    'ts': now,
+                }
+
+    return event
 def vrrp_metrics(name):
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT ts FROM events WHERE name=? ORDER BY id DESC',(name,)).fetchall()
-    return {'failovers':len(r),'last_change':r[0][0] if r else None}
+    with sqlite3.connect(DB) as c:
+        rows = c.execute(
+            '''
+            SELECT ts, old_master, new_master
+            FROM events
+            WHERE name=?
+            ORDER BY id DESC
+            ''',
+            (name,)
+        ).fetchall()
+
+    metrics = {
+        'failovers': 0,
+        'no_master': 0,
+        'split_brain': 0,
+        'recoveries': 0,
+        'normalized': 0,
+        'last_change': rows[0][0] if rows else None,
+        'last_failover': None,
+        'last_critical': None,
+    }
+
+    for ts, old_master, new_master in rows:
+        event_type = classify_vrrp_event(old_master, new_master)
+
+        if event_type == 'FAILOVER':
+            metrics['failovers'] += 1
+            if metrics['last_failover'] is None:
+                metrics['last_failover'] = ts
+
+        elif event_type == 'NO_MASTER':
+            metrics['no_master'] += 1
+            if metrics['last_critical'] is None:
+                metrics['last_critical'] = ts
+
+        elif event_type == 'SPLIT_BRAIN':
+            metrics['split_brain'] += 1
+            if metrics['last_critical'] is None:
+                metrics['last_critical'] = ts
+
+        elif event_type == 'RECOVERY':
+            metrics['recoveries'] += 1
+
+        elif event_type == 'NORMALIZED':
+            metrics['normalized'] += 1
+
+    return metrics
 def cluster_health(nodes,vrrp):
     diagnosis=validate_cluster(nodes,vrrp)
 
@@ -534,9 +707,53 @@ def poll():
     record_availability(ns);process_node_notifications(ns)
     for name in ns:ns[name]['notification']=notification_status(name)
     vs=[]
-    for v in c.get('vrrp',[]):
-        owners=[name for name in v.get('nodes',[]) if v['vip'] in ns.get(name,{}).get('addresses',[])];master=owners[0] if len(owners)==1 else ('MULTIPLE' if len(owners)>1 else None);record(v['name'],master or 'NONE');roles={name:('MASTER' if name==master else 'BACKUP') for name in v.get('nodes',[])};vs.append({**v,'master':master,'healthy':len(owners)==1,'roles':roles,**vrrp_metrics(v['name'])})
-    with lock:cache.update(nodes=ns,vrrp=vs,cluster=cluster_health(ns,vs),updated=datetime.now().isoformat(timespec='seconds'))
+
+    for v in c.get('vrrp', []):
+        owners = [
+            name
+            for name in v.get('nodes', [])
+            if v['vip'] in ns.get(name, {}).get('addresses', [])
+        ]
+
+        master = (
+            owners[0]
+            if len(owners) == 1
+            else ('MULTIPLE' if len(owners) > 1 else None)
+        )
+
+        event = record(
+            v['name'],
+            master or 'NONE'
+        )
+
+        if event:
+            send_vrrp_notification(
+                event['name'],
+                event['old_master'],
+                event['new_master'],
+                event['ts'],
+            )
+
+        roles = {
+            name: ('MASTER' if name == master else 'BACKUP')
+            for name in v.get('nodes', [])
+        }
+
+        vs.append({
+            **v,
+            'master': master,
+            'healthy': len(owners) == 1,
+            'roles': roles,
+            **vrrp_metrics(v['name']),
+        })
+
+    with lock:
+        cache.update(
+            nodes=ns,
+            vrrp=vs,
+            cluster=cluster_health(ns,vs),
+            updated=datetime.now().isoformat(timespec='seconds')
+        )
 def loop():
     while True:
         try:poll()
@@ -619,6 +836,12 @@ def update_settings():
             ),
             node_down=bool(d.get('node_down')),
             recovery_mail=bool(d.get('recovery_mail')),
+            vrrp_failover=bool(
+                d.get('vrrp_failover', s.get('vrrp_failover', True))
+            ),
+            vrrp_health=bool(
+                d.get('vrrp_health', s.get('vrrp_health', True))
+            ),
             failures_before_alert=failures,
             smtp_host=str(d.get('smtp_host', '')).strip(),
             smtp_port=port,
@@ -719,9 +942,26 @@ def availability():return jsonify(availability_stats())
 @app.route('/api/history')
 @login_required
 def history():
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT 50').fetchall()
-    return jsonify([{'ts':x[0],'name':x[1],'old':x[2],'new':x[3],'type':'LOST' if x[3]=='NONE' else ('RECOVERED' if x[2]=='NONE' else 'FAILOVER')} for x in r])
-@app.post('/api/nodes/<name>/maintenance')
+    with sqlite3.connect(DB) as c:
+        rows = c.execute(
+            '''
+            SELECT ts,name,old_master,new_master
+            FROM events
+            ORDER BY id DESC
+            LIMIT 50
+            '''
+        ).fetchall()
+
+    return jsonify([
+        {
+            'ts': row[0],
+            'name': row[1],
+            'old': row[2],
+            'new': row[3],
+            'type': classify_vrrp_event(row[2], row[3]),
+        }
+        for row in rows
+    ])@app.post('/api/nodes/<name>/maintenance')
 @login_required
 def node_maintenance(name):
     if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403

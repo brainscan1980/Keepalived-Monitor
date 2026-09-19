@@ -1,4 +1,5 @@
 import sqlite3, threading, time
+from vrrp_events import classify_vrrp_event
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request, render_template
 
@@ -46,7 +47,7 @@ def _failover_events(since):
     with sqlite3.connect(_core.DB) as c:rows=c.execute('SELECT id,ts,name,old_master,new_master FROM events WHERE ts>=? ORDER BY ts DESC,id DESC',(effective_since,)).fetchall()
     out=[];counts={}
     for event_id,ts,name,old_master,new_master in rows:
-        kind='LOST' if new_master=='NONE' else ('RECOVERED' if old_master=='NONE' else 'FAILOVER')
+        kind = classify_vrrp_event(old_master, new_master)
         if kind=='FAILOVER':counts[name]=counts.get(name,0)+1
         out.append({'id':event_id,'ts':ts,'name':name,'old_master':old_master,'new_master':new_master,'type':kind})
     return out,counts

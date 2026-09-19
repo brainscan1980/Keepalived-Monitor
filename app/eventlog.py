@@ -1,4 +1,5 @@
 import math, sqlite3, threading, time
+from vrrp_events import classify_vrrp_event
 from datetime import datetime
 from flask import Blueprint, jsonify, render_template, request
 bp=Blueprint('eventlog',__name__);_core=None;_started=False
@@ -26,10 +27,58 @@ def _watch():
 def _auth():return bool(_core.session.get('authenticated'))
 def _csrf():return _core.csrf_ok()
 def _all_events():
-    with sqlite3.connect(_core.DB) as c:sys=c.execute('SELECT id,ts,category,subject,event_type,detail FROM system_events').fetchall();cutoff=(c.execute("SELECT value FROM eventlog_meta WHERE key='vrrp_cutoff'").fetchone() or [None])[0];fail=c.execute('SELECT id,ts,name,old_master,new_master FROM events WHERE (? IS NULL OR ts>?)',(cutoff,cutoff)).fetchall()
-    out=[{'key':f's-{r[0]}','ts':r[1],'category':r[2],'subject':r[3],'type':r[4],'detail':r[5]} for r in sys]
-    for event_id,ts,name,old,new in fail:out.append({'key':f'v-{event_id}','ts':ts,'category':'VRRP','subject':name,'type':'VRRP LOST' if new=='NONE' else ('VRRP RECOVERED' if old=='NONE' else 'FAILOVER'),'detail':f'{old} → {new}'})
-    out.sort(key=lambda x:(x['ts'],x['key']),reverse=True);return out
+    with sqlite3.connect(_core.DB) as c:
+        sys = c.execute(
+            '''
+            SELECT id,ts,category,subject,event_type,detail
+            FROM system_events
+            '''
+        ).fetchall()
+
+        cutoff = (
+            c.execute(
+                "SELECT value FROM eventlog_meta WHERE key='vrrp_cutoff'"
+            ).fetchone()
+            or [None]
+        )[0]
+
+        fail = c.execute(
+            '''
+            SELECT id,ts,name,old_master,new_master
+            FROM events
+            WHERE (? IS NULL OR ts>?)
+            ''',
+            (cutoff, cutoff)
+        ).fetchall()
+
+    out = [
+        {
+            'key': f's-{r[0]}',
+            'ts': r[1],
+            'category': r[2],
+            'subject': r[3],
+            'type': r[4],
+            'detail': r[5],
+        }
+        for r in sys
+    ]
+
+    for event_id, ts, name, old, new in fail:
+        out.append({
+            'key': f'v-{event_id}',
+            'ts': ts,
+            'category': 'VRRP',
+            'subject': name,
+            'type': classify_vrrp_event(old, new),
+            'detail': f'{old} → {new}',
+        })
+
+    out.sort(
+        key=lambda x: (x['ts'], x['key']),
+        reverse=True
+    )
+
+    return out
 def init_eventlog(core):
     global _core,_started
     _core=core;_init_db();core.app.register_blueprint(bp)
@@ -46,11 +95,44 @@ def events():
     return jsonify(_all_events()[:limit])
 @bp.get('/api/events/page')
 def events_page_api():
-    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
-    try:per_page=int(request.args.get('per_page',20));page=max(1,int(request.args.get('page',1)))
-    except ValueError:per_page,page=20,1
-    if per_page not in {10,20,50,100}:per_page=20
-    items=_all_events();total=len(items);pages=max(1,math.ceil(total/per_page));page=min(page,pages);start=(page-1)*per_page;return jsonify({'items':items[start:start+per_page],'page':page,'per_page':per_page,'total':total,'pages':pages})
+    if not _auth():
+        return jsonify({'ok': False, 'error': 'Nicht angemeldet'}), 401
+
+    try:
+        per_page = int(request.args.get('per_page', 20))
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        per_page, page = 20, 1
+
+    if per_page not in {10, 20, 50, 100}:
+        per_page = 20
+
+    category = request.args.get('category', 'ALL').upper()
+
+    if category not in {'ALL', 'VRRP', 'NODE', 'MAINTENANCE'}:
+        category = 'ALL'
+
+    items = _all_events()
+
+    if category != 'ALL':
+        items = [
+            item for item in items
+            if item.get('category') == category
+        ]
+
+    total = len(items)
+    pages = max(1, math.ceil(total / per_page))
+    page = min(page, pages)
+    start = (page - 1) * per_page
+
+    return jsonify({
+        'items': items[start:start + per_page],
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+        'pages': pages,
+        'category': category,
+    })
 @bp.post('/api/events/clear')
 def clear_events():
     if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401

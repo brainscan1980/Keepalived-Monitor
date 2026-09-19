@@ -49,6 +49,8 @@
             <input id="notifications_enabled" type="checkbox">
         </label>
 
+        <div id="notificationSettingsDetails">
+
         <label class="switch-row">
             <span>
                 <b>NODE DOWN Benachrichtigung</b>
@@ -65,6 +67,22 @@
             <input id="recovery_mail" type="checkbox">
         </label>
 
+        <label class="switch-row">
+            <span>
+                <b>VRRP MASTER-Wechsel</b>
+                <small>Benachrichtigen, wenn eine VRRP-Instanz auf einen anderen MASTER wechselt</small>
+            </span>
+            <input id="vrrp_failover" type="checkbox">
+        </label>
+
+        <label class="switch-row">
+            <span>
+                <b>Kritische VRRP-Zustände</b>
+                <small>Benachrichtigen bei keinem oder mehreren MASTER sowie bei der Normalisierung</small>
+            </span>
+            <input id="vrrp_health" type="checkbox">
+        </label>
+
         <label class="field notification-failures">
             <span>Fehlversuche bis zum Alarm</span>
             <input id="failures_before_alert"
@@ -76,6 +94,8 @@
 
         <div class="meta">
             Die Benachrichtigungsregeln gelten für alle aktivierten Kanäle.
+        </div>
+
         </div>
 
     </div>
@@ -93,6 +113,8 @@
             </span>
             <input id="mail_enabled" type="checkbox">
         </label>
+
+        <div id="emailSettingsDetails">
 
         <div class="form-grid">
 
@@ -167,6 +189,8 @@
             </button>
         </div>
 
+        </div>
+
     </div>
 </section>
 
@@ -182,6 +206,8 @@
             </span>
             <input id="telegram_enabled" type="checkbox">
         </label>
+
+        <div id="telegramSettingsDetails">
 
         <div class="form-grid">
 
@@ -223,6 +249,8 @@
         </div>
 
         <div id="telegramResult" class="action-result"></div>
+
+        </div>
 
     </div>
 </section>

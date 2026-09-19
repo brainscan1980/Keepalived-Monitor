@@ -54,6 +54,8 @@ def audited_settings():
         'mail_enabled',
         'node_down',
         'recovery_mail',
+        'vrrp_failover',
+        'vrrp_health',
         'failures_before_alert',
         'smtp_port',
         'smtp_security',
