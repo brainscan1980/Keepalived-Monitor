@@ -4,6 +4,8 @@ const ids=[
     'notifications_enabled',
     'node_down',
     'recovery_mail',
+    'vrrp_failover',
+    'vrrp_health',
     'failures_before_alert',
     'mail_enabled',
     'mail_to',

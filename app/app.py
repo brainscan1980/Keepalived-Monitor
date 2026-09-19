@@ -66,6 +66,8 @@ def defaults():
         'mail_enabled': env_bool('MAIL_ENABLED'),
         'node_down': bool(n.get('enabled', True)),
         'recovery_mail': bool(n.get('recovery_mail', True)),
+        'vrrp_failover': True,
+        'vrrp_health': True,
         'failures_before_alert': max(
             1,
             int(n.get('failures_before_alert', 3))
@@ -263,7 +265,6 @@ def fmt_duration(start,end):
     except Exception:return 'unbekannt'
 def notification_cfg():
     s = load_settings()
-
     return {
         'notifications_enabled': bool(
             s.get('notifications_enabled', True)
@@ -277,6 +278,12 @@ def notification_cfg():
         ),
         'recovery_mail': bool(
             s.get('recovery_mail', True)
+        ),
+        'vrrp_failover': bool(
+            s.get('vrrp_failover', True)
+        ),
+        'vrrp_health': bool(
+            s.get('vrrp_health', True)
         ),
     }
 def notification_status(name):
@@ -360,6 +367,18 @@ def send_vrrp_notification(name, old_master, new_master, now):
 
     if not s.get('notifications_enabled', True):
         return
+
+    is_health_event = (
+        old_master in {'NONE', 'MULTIPLE'}
+        or new_master in {'NONE', 'MULTIPLE'}
+    )
+
+    if is_health_event:
+        if not s.get('vrrp_health', True):
+            return
+    else:
+        if not s.get('vrrp_failover', True):
+            return
 
     if new_master == 'MULTIPLE':
         subject = f'🔴 Keepalived Monitor – Mehrere VRRP MASTER: {name}'
@@ -773,6 +792,12 @@ def update_settings():
             ),
             node_down=bool(d.get('node_down')),
             recovery_mail=bool(d.get('recovery_mail')),
+            vrrp_failover=bool(
+                d.get('vrrp_failover', s.get('vrrp_failover', True))
+            ),
+            vrrp_health=bool(
+                d.get('vrrp_health', s.get('vrrp_health', True))
+            ),
             failures_before_alert=failures,
             smtp_host=str(d.get('smtp_host', '')).strip(),
             smtp_port=port,
