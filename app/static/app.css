@@ -264,6 +264,8 @@
 /* First group needs slightly less space above it */
 .sidebar nav > .nav-label:first-child {
     margin-top: 8px;
+}
+
 /* Abstand zwischen Dashboard-Inhalt und letztem Update */
 main > footer {
     margin-top: 24px;
