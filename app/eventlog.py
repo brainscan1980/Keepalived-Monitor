@@ -95,11 +95,44 @@ def events():
     return jsonify(_all_events()[:limit])
 @bp.get('/api/events/page')
 def events_page_api():
-    if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
-    try:per_page=int(request.args.get('per_page',20));page=max(1,int(request.args.get('page',1)))
-    except ValueError:per_page,page=20,1
-    if per_page not in {10,20,50,100}:per_page=20
-    items=_all_events();total=len(items);pages=max(1,math.ceil(total/per_page));page=min(page,pages);start=(page-1)*per_page;return jsonify({'items':items[start:start+per_page],'page':page,'per_page':per_page,'total':total,'pages':pages})
+    if not _auth():
+        return jsonify({'ok': False, 'error': 'Nicht angemeldet'}), 401
+
+    try:
+        per_page = int(request.args.get('per_page', 20))
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        per_page, page = 20, 1
+
+    if per_page not in {10, 20, 50, 100}:
+        per_page = 20
+
+    category = request.args.get('category', 'ALL').upper()
+
+    if category not in {'ALL', 'VRRP', 'NODE', 'MAINTENANCE'}:
+        category = 'ALL'
+
+    items = _all_events()
+
+    if category != 'ALL':
+        items = [
+            item for item in items
+            if item.get('category') == category
+        ]
+
+    total = len(items)
+    pages = max(1, math.ceil(total / per_page))
+    page = min(page, pages)
+    start = (page - 1) * per_page
+
+    return jsonify({
+        'items': items[start:start + per_page],
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+        'pages': pages,
+        'category': category,
+    })
 @bp.post('/api/events/clear')
 def clear_events():
     if not _auth():return jsonify({'ok':False,'error':'Nicht angemeldet'}),401
