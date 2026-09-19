@@ -1,4 +1,5 @@
 import math, sqlite3, threading, time
+from vrrp_events import classify_vrrp_event
 from datetime import datetime
 from flask import Blueprint, jsonify, render_template, request
 bp=Blueprint('eventlog',__name__);_core=None;_started=False
@@ -26,10 +27,58 @@ def _watch():
 def _auth():return bool(_core.session.get('authenticated'))
 def _csrf():return _core.csrf_ok()
 def _all_events():
-    with sqlite3.connect(_core.DB) as c:sys=c.execute('SELECT id,ts,category,subject,event_type,detail FROM system_events').fetchall();cutoff=(c.execute("SELECT value FROM eventlog_meta WHERE key='vrrp_cutoff'").fetchone() or [None])[0];fail=c.execute('SELECT id,ts,name,old_master,new_master FROM events WHERE (? IS NULL OR ts>?)',(cutoff,cutoff)).fetchall()
-    out=[{'key':f's-{r[0]}','ts':r[1],'category':r[2],'subject':r[3],'type':r[4],'detail':r[5]} for r in sys]
-    for event_id,ts,name,old,new in fail:out.append({'key':f'v-{event_id}','ts':ts,'category':'VRRP','subject':name,'type':'VRRP LOST' if new=='NONE' else ('VRRP RECOVERED' if old=='NONE' else 'FAILOVER'),'detail':f'{old} → {new}'})
-    out.sort(key=lambda x:(x['ts'],x['key']),reverse=True);return out
+    with sqlite3.connect(_core.DB) as c:
+        sys = c.execute(
+            '''
+            SELECT id,ts,category,subject,event_type,detail
+            FROM system_events
+            '''
+        ).fetchall()
+
+        cutoff = (
+            c.execute(
+                "SELECT value FROM eventlog_meta WHERE key='vrrp_cutoff'"
+            ).fetchone()
+            or [None]
+        )[0]
+
+        fail = c.execute(
+            '''
+            SELECT id,ts,name,old_master,new_master
+            FROM events
+            WHERE (? IS NULL OR ts>?)
+            ''',
+            (cutoff, cutoff)
+        ).fetchall()
+
+    out = [
+        {
+            'key': f's-{r[0]}',
+            'ts': r[1],
+            'category': r[2],
+            'subject': r[3],
+            'type': r[4],
+            'detail': r[5],
+        }
+        for r in sys
+    ]
+
+    for event_id, ts, name, old, new in fail:
+        out.append({
+            'key': f'v-{event_id}',
+            'ts': ts,
+            'category': 'VRRP',
+            'subject': name,
+            'type': classify_vrrp_event(old, new),
+            'detail': f'{old} → {new}',
+        })
+
+    out.sort(
+        key=lambda x: (x['ts'], x['key']),
+        reverse=True
+    )
+
+    return out
 def init_eventlog(core):
     global _core,_started
     _core=core;_init_db();core.app.register_blueprint(bp)

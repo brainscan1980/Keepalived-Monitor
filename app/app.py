@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request, redirect, session, u
 from cryptography.fernet import Fernet, InvalidToken
 import yaml
 from cluster_validation import validate_cluster
+from vrrp_events import classify_vrrp_event, is_vrrp_health_event
 
 app=Flask(__name__)
 app.secret_key=os.getenv('SECRET_KEY') or secrets.token_hex(32)
@@ -368,19 +369,17 @@ def send_vrrp_notification(name, old_master, new_master, now):
     if not s.get('notifications_enabled', True):
         return
 
-    is_health_event = (
-        old_master in {'NONE', 'MULTIPLE'}
-        or new_master in {'NONE', 'MULTIPLE'}
-    )
+    event_type = classify_vrrp_event(old_master, new_master)
 
-    if is_health_event:
+    if is_vrrp_health_event(old_master, new_master):
+
         if not s.get('vrrp_health', True):
             return
     else:
         if not s.get('vrrp_failover', True):
             return
 
-    if new_master == 'MULTIPLE':
+    if event_type == 'SPLIT_BRAIN':
         subject = f'🔴 Keepalived Monitor – Mehrere VRRP MASTER: {name}'
         body = (
             f'VRRP-Instanz: {name}\n'
@@ -390,7 +389,7 @@ def send_vrrp_notification(name, old_master, new_master, now):
         )
         kind = 'VRRP MULTIPLE'
 
-    elif new_master == 'NONE':
+    elif event_type == 'NO_MASTER':
         subject = f'🔴 Keepalived Monitor – Kein VRRP MASTER: {name}'
         body = (
             f'VRRP-Instanz: {name}\n'
@@ -400,7 +399,7 @@ def send_vrrp_notification(name, old_master, new_master, now):
         )
         kind = 'VRRP NO MASTER'
 
-    elif old_master == 'MULTIPLE':
+    elif event_type == 'NORMALIZED':
         subject = f'🟢 Keepalived Monitor – VRRP MASTER-Zustand normalisiert: {name}'
         body = (
             f'VRRP-Instanz: {name}\n'
@@ -410,7 +409,7 @@ def send_vrrp_notification(name, old_master, new_master, now):
         )
         kind = 'VRRP NORMALIZED'
 
-    elif old_master == 'NONE':
+    elif event_type == 'RECOVERY':
         subject = f'🟢 Keepalived Monitor – VRRP MASTER wieder verfügbar: {name}'
         body = (
             f'VRRP-Instanz: {name}\n'
@@ -898,9 +897,26 @@ def availability():return jsonify(availability_stats())
 @app.route('/api/history')
 @login_required
 def history():
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT ts,name,old_master,new_master FROM events ORDER BY id DESC LIMIT 50').fetchall()
-    return jsonify([{'ts':x[0],'name':x[1],'old':x[2],'new':x[3],'type':'LOST' if x[3]=='NONE' else ('RECOVERED' if x[2]=='NONE' else 'FAILOVER')} for x in r])
-@app.post('/api/nodes/<name>/maintenance')
+    with sqlite3.connect(DB) as c:
+        rows = c.execute(
+            '''
+            SELECT ts,name,old_master,new_master
+            FROM events
+            ORDER BY id DESC
+            LIMIT 50
+            '''
+        ).fetchall()
+
+    return jsonify([
+        {
+            'ts': row[0],
+            'name': row[1],
+            'old': row[2],
+            'new': row[3],
+            'type': classify_vrrp_event(row[2], row[3]),
+        }
+        for row in rows
+    ])@app.post('/api/nodes/<name>/maintenance')
 @login_required
 def node_maintenance(name):
     if not csrf_ok():return jsonify({'ok':False,'error':'Ungültiges CSRF-Token'}),403
