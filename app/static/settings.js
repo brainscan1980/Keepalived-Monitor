@@ -78,24 +78,52 @@ function summary(s){
 }
 function updateNotificationControls(){
     const master=document.querySelector('#notifications_enabled');
-    const enabled=!!master?.checked;
+    const notificationsEnabled=!!master?.checked;
 
-    const emailSection=document.querySelector('#emailSettingsSection');
-    const telegramSection=document.querySelector('#telegramSettingsSection');
+    const notificationDetails=
+        document.querySelector('#notificationSettingsDetails');
 
-    [emailSection,telegramSection].forEach(section=>{
-        if(!section)return;
+    if(notificationDetails){
+        notificationDetails.hidden=!notificationsEnabled;
+    }
+
+    const channels=[
+        {
+            section:document.querySelector('#emailSettingsSection'),
+            toggle:document.querySelector('#mail_enabled'),
+            details:document.querySelector('#emailSettingsDetails')
+        },
+        {
+            section:document.querySelector('#telegramSettingsSection'),
+            toggle:document.querySelector('#telegram_enabled'),
+            details:document.querySelector('#telegramSettingsDetails')
+        }
+    ];
+
+    channels.forEach(({section,toggle,details})=>{
+        if(!section||!toggle||!details)return;
 
         section.classList.toggle(
             'notification-channel-disabled',
-            !enabled
+            !notificationsEnabled
         );
 
-        section.querySelectorAll('input,select,button').forEach(el=>{
-            el.disabled=!enabled;
+        toggle.disabled=!notificationsEnabled;
+
+        // Detailbereich nur bei aktiviertem Kanal anzeigen.
+        details.hidden=!toggle.checked;
+
+        // Detailfelder nur bedienen, wenn global und Kanal aktiv sind.
+        details.querySelectorAll('input,select,button').forEach(el=>{
+            el.disabled=!notificationsEnabled||!toggle.checked;
         });
     });
 }
+document.querySelector('#mail_enabled')
+    ?.addEventListener('change',updateNotificationControls);
+
+document.querySelector('#telegram_enabled')
+    ?.addEventListener('change',updateNotificationControls);
 async function loadHistory(){const el=document.querySelector('#notificationHistory');if(!el)return;el.innerHTML='<div class="meta">Benachrichtigungs-Historie wird geladen…</div>';try{const r=await fetch('/api/notifications/history',{cache:'no-store'});if(!r.ok){if(r.status===404){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}throw new Error(`HTTP ${r.status}`)}const h=await r.json();if(!Array.isArray(h)||!h.length){el.innerHTML='<div class="meta"><b>Noch keine Benachrichtigungen vorhanden.</b><br>Sobald eine Alarm-, Recovery- oder Testmail versendet wurde, erscheint sie hier.</div>';return}el.innerHTML=h.map(x=>`<div class="row history-row"><span>${esc(fmt(x.ts))}</span><b>${esc(x.type||'MAIL')}</b><span>${esc(x.node||'–')}</span><span class="${x.ok?'good':'bad'}"><b>${x.ok?'ERFOLGREICH':'FEHLGESCHLAGEN'}</b>${x.error?`<div class="meta">${esc(x.error)}</div>`:''}</span></div>`).join('')}catch(e){el.innerHTML='<div class="meta bad"><b>Historie konnte nicht geladen werden.</b><br>Bitte die Seite später erneut laden.</div>'}}
 function bytes(n){if(n==null)return'–';if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}function diffShort(c){if(!c)return'';const n=c.nodes||{},v=c.vrrp||{},parts=[];if(n.added?.length)parts.push(`Nodes +${n.added.length}`);if(n.removed?.length)parts.push(`Nodes −${n.removed.length}`);if(n.changed?.length)parts.push(`Nodes geändert ${n.changed.length}`);if(v.added?.length)parts.push(`VRRP +${v.added.length}`);if(v.removed?.length)parts.push(`VRRP −${v.removed.length}`);if(v.changed?.length)parts.push(`VRRP geändert ${v.changed.length}`);if(c.refresh_changed)parts.push('Intervall geändert');return parts.length?parts.join(' · '):'entspricht der aktuellen Konfiguration'}
 async function loadBackups(){const el=document.querySelector('#configBackups');if(!el)return;el.innerHTML='<div class="meta">Sicherungen werden geladen…</div>';try{const r=await fetch('/api/config/backups',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Backups konnten nicht geladen werden.');if(!j.backups?.length){el.innerHTML='<div class="meta">Noch keine automatische Konfigurationssicherung vorhanden.</div>';return}el.innerHTML=j.backups.map(b=>`<div class="row history-row"><span><b>${esc(fmt(b.created))}</b><div class="meta">${esc(b.name)} · ${bytes(b.size)}</div></span><span>${b.valid?`<b>${b.summary.nodes} Nodes · ${b.summary.vrrp} VRRP</b><div class="meta">${esc(diffShort(b.changes))}</div>`:`<b class="bad">UNGÜLTIG</b><div class="meta">${esc(b.error)}</div>`}</span><span class="control-buttons" style="margin:0">${b.valid?`<button type="button" class="action-btn" data-restore-backup="${esc(b.name)}">↶ Wiederherstellen</button>`:''}<button type="button" class="action-btn stop" data-delete-backup="${esc(b.name)}">Löschen</button></span></div>`).join('');el.querySelectorAll('[data-restore-backup]').forEach(b=>b.onclick=()=>restoreBackup(b.dataset.restoreBackup));el.querySelectorAll('[data-delete-backup]').forEach(b=>b.onclick=()=>deleteBackup(b.dataset.deleteBackup))}catch(e){el.innerHTML=`<div class="meta bad">${esc(e.message)}</div>`}}
