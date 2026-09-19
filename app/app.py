@@ -631,8 +631,53 @@ def record(name, new):
 
     return event
 def vrrp_metrics(name):
-    with sqlite3.connect(DB) as c:r=c.execute('SELECT ts FROM events WHERE name=? ORDER BY id DESC',(name,)).fetchall()
-    return {'failovers':len(r),'last_change':r[0][0] if r else None}
+    with sqlite3.connect(DB) as c:
+        rows = c.execute(
+            '''
+            SELECT ts, old_master, new_master
+            FROM events
+            WHERE name=?
+            ORDER BY id DESC
+            ''',
+            (name,)
+        ).fetchall()
+
+    metrics = {
+        'failovers': 0,
+        'no_master': 0,
+        'split_brain': 0,
+        'recoveries': 0,
+        'normalized': 0,
+        'last_change': rows[0][0] if rows else None,
+        'last_failover': None,
+        'last_critical': None,
+    }
+
+    for ts, old_master, new_master in rows:
+        event_type = classify_vrrp_event(old_master, new_master)
+
+        if event_type == 'FAILOVER':
+            metrics['failovers'] += 1
+            if metrics['last_failover'] is None:
+                metrics['last_failover'] = ts
+
+        elif event_type == 'NO_MASTER':
+            metrics['no_master'] += 1
+            if metrics['last_critical'] is None:
+                metrics['last_critical'] = ts
+
+        elif event_type == 'SPLIT_BRAIN':
+            metrics['split_brain'] += 1
+            if metrics['last_critical'] is None:
+                metrics['last_critical'] = ts
+
+        elif event_type == 'RECOVERY':
+            metrics['recoveries'] += 1
+
+        elif event_type == 'NORMALIZED':
+            metrics['normalized'] += 1
+
+    return metrics
 def cluster_health(nodes,vrrp):
     diagnosis=validate_cluster(nodes,vrrp)
 
