@@ -16,3 +16,19 @@ updates:
 
     commit-message:
       prefix: "deps"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+
+    open-pull-requests-limit: 3
+
+    labels:
+      - "dependencies"
+
+    commit-message:
+      prefix: "deps"
