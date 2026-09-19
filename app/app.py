@@ -355,6 +355,81 @@ def send_node_notification(kind, name, node, now, down_since=None, failures=None
             send_telegram(f'{subject}\n\n{body}')
         except Exception as e:
             print(f'telegram notification error {name}: {e}', flush=True)
+def send_vrrp_notification(name, old_master, new_master, now):
+    s = load_settings()
+
+    if not s.get('notifications_enabled', True):
+        return
+
+    if new_master == 'MULTIPLE':
+        subject = f'🔴 Keepalived Monitor – Mehrere VRRP MASTER: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Vorheriger Zustand: {old_master}\n'
+            'Neuer Zustand: MEHRERE MASTER\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP MULTIPLE'
+
+    elif new_master == 'NONE':
+        subject = f'🔴 Keepalived Monitor – Kein VRRP MASTER: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            'Neuer MASTER: KEIN MASTER\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP NO MASTER'
+
+    elif old_master == 'MULTIPLE':
+        subject = f'🟢 Keepalived Monitor – VRRP MASTER-Zustand normalisiert: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            'Vorheriger Zustand: MEHRERE MASTER\n'
+            f'Aktueller MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP NORMALIZED'
+
+    elif old_master == 'NONE':
+        subject = f'🟢 Keepalived Monitor – VRRP MASTER wieder verfügbar: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            f'Neuer MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP RECOVERY'
+
+    else:
+        subject = f'🔄 Keepalived Monitor – VRRP MASTER-Wechsel: {name}'
+        body = (
+            f'VRRP-Instanz: {name}\n'
+            f'Alter MASTER: {old_master}\n'
+            f'Neuer MASTER: {new_master}\n'
+            f'Zeitpunkt: {now}'
+        )
+        kind = 'VRRP FAILOVER'
+
+    if s.get('mail_enabled'):
+        try:
+            send_mail(subject, body)
+            record_notification(kind, name, True, ts=now)
+        except Exception as e:
+            record_notification(kind, name, False, e, now)
+            print(
+                f'mail VRRP notification error {name}: {e}',
+                flush=True
+            )
+
+    if s.get('telegram_enabled'):
+        try:
+            send_telegram(f'{subject}\n\n{body}')
+        except Exception as e:
+            print(
+                f'telegram VRRP notification error {name}: {e}',
+                flush=True
+            )
 def process_node_notifications(nodes):
     st = notification_cfg()
 
@@ -495,13 +570,48 @@ def poll_node(node):
                     for a in itf.get('addr_info',[]):d['addresses'].append(a.get('local'))
             except Exception:pass
     return d
-def record(name,new):
+def record(name, new):
+    event = None
+
     with sqlite3.connect(DB) as c:
-        r=c.execute('SELECT master FROM state WHERE name=?',(name,)).fetchone();old=r[0] if r else None
-        if old!=new:
-            if r:c.execute('UPDATE state SET master=? WHERE name=?',(new,name))
-            else:c.execute('INSERT INTO state(name,master) VALUES(?,?)',(name,new))
-            if old is not None:c.execute('INSERT INTO events(ts,name,old_master,new_master) VALUES(?,?,?,?)',(datetime.now().isoformat(timespec='seconds'),name,old,new))
+        r = c.execute(
+            'SELECT master FROM state WHERE name=?',
+            (name,)
+        ).fetchone()
+
+        old = r[0] if r else None
+
+        if old != new:
+            if r:
+                c.execute(
+                    'UPDATE state SET master=? WHERE name=?',
+                    (new, name)
+                )
+            else:
+                c.execute(
+                    'INSERT INTO state(name,master) VALUES(?,?)',
+                    (name, new)
+                )
+
+            if old is not None:
+                now = datetime.now().isoformat(timespec='seconds')
+
+                c.execute(
+                    '''
+                    INSERT INTO events(ts,name,old_master,new_master)
+                    VALUES(?,?,?,?)
+                    ''',
+                    (now, name, old, new)
+                )
+
+                event = {
+                    'name': name,
+                    'old_master': old,
+                    'new_master': new,
+                    'ts': now,
+                }
+
+    return event
 def vrrp_metrics(name):
     with sqlite3.connect(DB) as c:r=c.execute('SELECT ts FROM events WHERE name=? ORDER BY id DESC',(name,)).fetchall()
     return {'failovers':len(r),'last_change':r[0][0] if r else None}
@@ -534,9 +644,53 @@ def poll():
     record_availability(ns);process_node_notifications(ns)
     for name in ns:ns[name]['notification']=notification_status(name)
     vs=[]
-    for v in c.get('vrrp',[]):
-        owners=[name for name in v.get('nodes',[]) if v['vip'] in ns.get(name,{}).get('addresses',[])];master=owners[0] if len(owners)==1 else ('MULTIPLE' if len(owners)>1 else None);record(v['name'],master or 'NONE');roles={name:('MASTER' if name==master else 'BACKUP') for name in v.get('nodes',[])};vs.append({**v,'master':master,'healthy':len(owners)==1,'roles':roles,**vrrp_metrics(v['name'])})
-    with lock:cache.update(nodes=ns,vrrp=vs,cluster=cluster_health(ns,vs),updated=datetime.now().isoformat(timespec='seconds'))
+
+    for v in c.get('vrrp', []):
+        owners = [
+            name
+            for name in v.get('nodes', [])
+            if v['vip'] in ns.get(name, {}).get('addresses', [])
+        ]
+
+        master = (
+            owners[0]
+            if len(owners) == 1
+            else ('MULTIPLE' if len(owners) > 1 else None)
+        )
+
+        event = record(
+            v['name'],
+            master or 'NONE'
+        )
+
+        if event:
+            send_vrrp_notification(
+                event['name'],
+                event['old_master'],
+                event['new_master'],
+                event['ts'],
+            )
+
+        roles = {
+            name: ('MASTER' if name == master else 'BACKUP')
+            for name in v.get('nodes', [])
+        }
+
+        vs.append({
+            **v,
+            'master': master,
+            'healthy': len(owners) == 1,
+            'roles': roles,
+            **vrrp_metrics(v['name']),
+        })
+
+    with lock:
+        cache.update(
+            nodes=ns,
+            vrrp=vs,
+            cluster=cluster_health(ns,vs),
+            updated=datetime.now().isoformat(timespec='seconds')
+        )
 def loop():
     while True:
         try:poll()
