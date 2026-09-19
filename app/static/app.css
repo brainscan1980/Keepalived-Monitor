@@ -196,8 +196,7 @@
     letter-spacing: 0.01em;
 }
 
-/* ==========================================================
-   Sidebar refinement
+/* ===================================================   Sidebar refinement
    ========================================================== */
 
 /* Navigation icons */
@@ -265,4 +264,7 @@
 /* First group needs slightly less space above it */
 .sidebar nav > .nav-label:first-child {
     margin-top: 8px;
+/* Abstand zwischen Dashboard-Inhalt und letztem Update */
+main > footer {
+    margin-top: 24px;
 }

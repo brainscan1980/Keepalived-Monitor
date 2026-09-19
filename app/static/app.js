@@ -26,8 +26,8 @@ vrrpEl.innerHTML=(s.vrrp||[]).map(v=>{
     const critical=splitBrain+noMaster;
 
     const criticalDetails=[
-        splitBrain ? `<span class="bad"><b>${esc(splitBrain)}</b> Split-Brain</span>` : '',
-        noMaster ? `<span class="bad"><b>${esc(noMaster)}</b> ohne MASTER</span>` : ''
+        splitBrain ? `<span><b>${esc(splitBrain)}</b> Split-Brain</span>` : '',
+        noMaster ? `<span><b>${esc(noMaster)}</b> × ohne MASTER</span>` : ''
     ].filter(Boolean).join(' · ');
 
     return `
@@ -53,12 +53,12 @@ vrrpEl.innerHTML=(s.vrrp||[]).map(v=>{
                 </div>
 
                 ${critical
-                    ? `<div class="vrrp-critical">${criticalDetails}</div>`
-                    : '<div class="meta good">Keine kritischen VRRP-Ereignisse</div>'}
+                    ? `<div class="meta">Historie: ${criticalDetails}</div>`
+                    : '<div class="meta">Historie: keine kritischen VRRP-Ereignisse</div>'}
             </span>
         </div>
     `;
 }).join('');
 
-renderClusterValidation(cluster.validation);document.querySelector('#updated').textContent='Letztes Update: '+(s.updated?new Date(s.updated).toLocaleString():'–');let h=[];let hr=await fetch('/api/events?limit=10',{cache:'no-store'});if(hr.ok)h=await hr.json();else{hr=await fetch('/api/history',{cache:'no-store'});if(hr.ok)h=(await hr.json()).slice(0,10).map(x=>({ts:x.ts,subject:x.name,detail:`${x.old||'–'} → ${x.new||'–'}`,category:'VRRP',type:x.type}))}document.querySelector('#history').innerHTML=h.length?h.slice(0,10).map(x=>`<div class="row history-row"><span>${new Date(x.ts).toLocaleString()}</span><b>${esc(x.subject||x.name)}</b><span>${esc(x.detail||x.category||'VRRP')}</span><span><span class="badge ${eventClass(x.type)}">${esc(x.type)}</span></span></div>`).join(''):'<div class="card meta">Noch keine Ereignisse aufgezeichnet.</div>'}catch(e){const clusterEl=document.querySelector('#cluster');clusterEl.className='pill header-cluster cluster-bad';clusterEl.style.cssText=document.documentElement.classList.contains('dark')?'':clusterLightStyle('bad');clusterEl.innerHTML='<span class="cluster-status-main bad"><i class="dot"></i>UNKNOWN</span><small class="cluster-status-sub">Dashboard nicht erreichbar</small>';clusterEl.title='Dashboard nicht erreichbar'}}
+renderClusterValidation(cluster.validation);document.querySelector('#updated').textContent='Letztes Update: '+(s.updated?new Date(s.updated).toLocaleString():'–');}catch(e){const clusterEl=document.querySelector('#cluster');clusterEl.className='pill header-cluster cluster-bad';clusterEl.style.cssText=document.documentElement.classList.contains('dark')?'':clusterLightStyle('bad');clusterEl.innerHTML='<span class="cluster-status-main bad"><i class="dot"></i>UNKNOWN</span><small class="cluster-status-sub">Dashboard nicht erreichbar</small>';clusterEl.title='Dashboard nicht erreichbar'}}
 const systemDark=window.matchMedia('(prefers-color-scheme: dark)'),getTheme=()=>localStorage.getItem('theme')||'auto';function applyTheme(mode=getTheme()){const dark=mode==='dark'||(mode==='auto'&&systemDark.matches);document.documentElement.classList.toggle('dark',dark);document.documentElement.dataset.theme=mode;document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===mode));const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=dark?'#0c1118':'#f4f6f8';const clusterEl=document.querySelector('#cluster');if(clusterEl){const state=['good','warn','bad','unknown'].find(x=>clusterEl.classList.contains(`cluster-${x}`))||'unknown';clusterEl.style.cssText=dark?'':clusterLightStyle(state)}}document.querySelectorAll('[data-theme]').forEach(b=>b.addEventListener('click',()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)}));systemDark.addEventListener?.('change',()=>{if(getTheme()==='auto')applyTheme('auto')});initSidebar();applyTheme();setInterval(load,5000);load();if('serviceWorker'in navigator)navigator.serviceWorker.register('/static/service-worker.js');
