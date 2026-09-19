@@ -195,3 +195,74 @@
     font-weight: 650;
     letter-spacing: 0.01em;
 }
+
+/* ==========================================================
+   Sidebar refinement
+   ========================================================== */
+
+/* Navigation icons */
+.nav-icon {
+    width: 20px;
+    min-width: 20px;
+    font-size: 15px;
+    line-height: 1;
+    opacity: .78;
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+/* Navigation links */
+.nav-link,
+.logout-link {
+    position: relative;
+    transition:
+        background-color .15s ease,
+        color .15s ease;
+}
+
+/* Hover */
+.nav-link:hover,
+.logout-link:hover {
+    background: rgba(255,255,255,.055);
+}
+
+.nav-link:hover .nav-icon,
+.logout-link:hover .nav-icon {
+    opacity: 1;
+}
+
+/* Active navigation item */
+.nav-link.active {
+    background: rgba(255,255,255,.09);
+    color: #fff;
+    font-weight: 700;
+}
+
+.nav-link.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: currentColor;
+    opacity: .9;
+}
+
+.nav-link.active .nav-icon {
+    opacity: 1;
+}
+
+/* Navigation group headings */
+.nav-label {
+    margin: 14px 11px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .11em;
+    opacity: .72;
+}
+
+/* First group needs slightly less space above it */
+.sidebar nav > .nav-label:first-child {
+    margin-top: 8px;
+}
