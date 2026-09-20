@@ -6,6 +6,12 @@ Keepalived Monitor überwacht Linux-Nodes agentenlos per SSH, erkennt MASTER- un
 
 Das Projekt richtet sich besonders an Homelabs und kleinere HA-Umgebungen, in denen beispielsweise DNS, Reverse Proxies, Vaultwarden, Webserver oder andere Dienste mit Keepalived/VRRP hochverfügbar betrieben werden.
 
+## 📸 Dashboard
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/brainscan1980/Keepalived-Monitor/main/docs/images/dashboard.png" alt="Keepalived Monitor Dashboard" width="100%">
+</p>
+
 ## 🐳 Docker Hub
 
 Das fertige Docker-Image wird automatisch über GitHub Actions auf Docker Hub veröffentlicht:
