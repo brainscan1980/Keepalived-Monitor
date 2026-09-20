@@ -457,4 +457,4 @@ Keepalived Monitor wird unter der **MIT License** veröffentlicht.
 
 Die Software darf frei verwendet, kopiert, verändert und weitergegeben werden – auch für kommerzielle Zwecke. Der Copyright- und Lizenzhinweis muss dabei erhalten bleiben.
 
-Weitere Informationen findest du in der Datei [LICENSE](LICENSE).
+Weitere Informationen findest du in der Datei [LICENSE](https://github.com/brainscan1980/Keepalived-Monitor/blob/main/LICENSE).
