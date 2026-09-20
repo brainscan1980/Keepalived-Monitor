@@ -1,6 +1,6 @@
 services:
   keepalived-monitor:
-    build: .
+    image: brainscan1980/keepalived-monitor:latest
     container_name: keepalived-monitor
     restart: unless-stopped
     ports:
