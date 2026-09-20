@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   docker:
-    name: Build and publish Docker image
+    name: Build, publish and scan Docker image
     runs-on: ubuntu-latest
 
     steps:
@@ -54,6 +54,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Docker Scout vulnerability summary
+        uses: docker/scout-action@v1
+        with:
+          command: quickview,cves
+          image: registry://brainscan1980/keepalived-monitor:latest
+          only-severities: critical,high,medium
+          only-fixed: true
+          write-comment: false
 
       - name: Update Docker Hub overview
         uses: peter-evans/dockerhub-description@e98e4d1628a5f3be2be7c231e50981aee98723ae # v4.0.0
