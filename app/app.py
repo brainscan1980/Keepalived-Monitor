@@ -2,7 +2,7 @@ import base64, hashlib, json, os, secrets, sqlite3, subprocess, threading, time,
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 from functools import wraps
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
@@ -13,7 +13,12 @@ from vrrp_events import classify_vrrp_event, is_vrrp_health_event
 
 app=Flask(__name__)
 app.secret_key=os.getenv('SECRET_KEY') or secrets.token_hex(32)
-app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','false').lower()=='true')
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','false').lower()=='true',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=365),
+)
 CONFIG_FILE=os.getenv('CONFIG_FILE','/app/config/config.yml'); DB='/app/data/history.db'; SETTINGS_FILE='/app/data/settings.json'
 lock=threading.Lock(); notification_lock=threading.Lock(); settings_lock=threading.Lock(); availability_lock=threading.Lock(); cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
 def cfg():
@@ -763,7 +768,13 @@ def loop():
 def login():
     if request.method=='POST':
         u=os.getenv('ADMIN_USERNAME','');p=os.getenv('ADMIN_PASSWORD','')
-        if u and p and secrets.compare_digest(request.form.get('username',''),u) and secrets.compare_digest(request.form.get('password',''),p):session.clear();session['authenticated']=True;session['csrf']=secrets.token_urlsafe(32);return redirect(request.args.get('next') or url_for('index'))
+        if u and p and secrets.compare_digest(request.form.get('username',''),u) and secrets.compare_digest(request.form.get('password',''),p):
+            remember = request.form.get('remember') == '1'
+            session.clear()
+            session.permanent = remember
+            session['authenticated'] = True
+            session['csrf'] = secrets.token_urlsafe(32)
+            return redirect(request.args.get('next') or url_for('index'))
         return render_template('login.html',error='Benutzername oder Passwort ist falsch.'),401
     return render_template('login.html',error=None)
 @app.post('/logout')
