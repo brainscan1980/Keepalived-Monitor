@@ -50,3 +50,6 @@ logs/
 *.bak
 *~
 config/config.yml.backup-*
+
+# Local development override
+docker-compose.dev.yml
