@@ -1,0 +1,52 @@
+/* Keepalived Monitor branding · v1.10 */
+
+.sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 0 4px;
+}
+
+.sidebar-title::before {
+    content: "";
+    display: block;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    background: url('/static/logo.svg') center / contain no-repeat;
+    filter: drop-shadow(0 5px 12px rgba(37, 99, 235, .18));
+}
+
+.sidebar-title .brand-full {
+    font-size: 16px;
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -.2px;
+}
+
+.sidebar-title .brand-full > span {
+    display: inline-block;
+    margin-top: 2px;
+    color: #38bdf8;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.app-shell.sidebar-collapsed .sidebar-title::before {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+}
+
+.app-shell.sidebar-collapsed .brand-short {
+    display: none;
+}
+
+@media (max-width: 900px) {
+    .app-shell.sidebar-collapsed .sidebar-title::before {
+        width: 44px;
+        height: 44px;
+        flex-basis: 44px;
+    }
+}
