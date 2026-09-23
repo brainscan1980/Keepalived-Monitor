@@ -7,6 +7,16 @@
     document.head.appendChild(link);
   }
 
+  const brandedIconHref='/static/app-icon.svg';
+  let brandedIcon=document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+  if(!brandedIcon){
+    brandedIcon=document.createElement('link');
+    brandedIcon.rel='icon';
+    brandedIcon.type='image/svg+xml';
+    document.head.prepend(brandedIcon);
+  }
+  brandedIcon.href=brandedIconHref;
+
   const el=document.querySelector('#appVersion'),update=document.querySelector('#updateAvailable');
   if(!el)return;
 
