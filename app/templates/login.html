@@ -3,39 +3,69 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="theme-color" content="#f4f6f8">
+    <meta name="theme-color" content="#0c1118">
+    <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="/static/app.css">
+    <link rel="icon" type="image/svg+xml" href="/static/app-icon.svg">
     <link rel="icon" href="/static/favicon.ico">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <title>Anmelden · Keepalived Monitor</title>
 </head>
+
 <body class="login-page">
-    <div class="login-card">
-        <div class="login-logo">Keepalived <span>Monitor</span></div>
-        <p>VRRP Cluster Dashboard</p>
+    <main class="login-shell">
+        <div class="login-card">
 
-        {% if error %}
-        <div class="login-error">{{ error }}</div>
-        {% endif %}
+            <div class="login-brand">
+                <img src="/static/logo.svg"
+                     class="login-brand-logo"
+                     alt="Keepalived Monitor">
 
-        <form method="post">
-            <label>
-                Benutzername
-                <input name="username" autocomplete="username" required autofocus>
-            </label>
+                <div class="login-brand-name">
+                    Keepalived <span>Monitor</span>
+                </div>
 
-            <label>
-                Passwort
-                <input type="password" name="password" autocomplete="current-password" required>
-            </label>
+                <p>VRRP Cluster Dashboard</p>
+            </div>
 
-            <label class="remember-login">
-                <input type="checkbox" name="remember" value="1">
-                <span>Eingeloggt bleiben</span>
-            </label>
+            {% if error %}
+            <div class="login-error">{{ error }}</div>
+            {% endif %}
 
-            <button type="submit" class="login-button">Anmelden</button>
-        </form>
-    </div>
+            <form method="post" class="login-form">
+                <label>
+                    <span>Benutzername</span>
+                    <input
+                        name="username"
+                        autocomplete="username"
+                        required
+                        autofocus>
+                </label>
+
+                <label>
+                    <span>Passwort</span>
+                    <input
+                        type="password"
+                        name="password"
+                        autocomplete="current-password"
+                        required>
+                </label>
+
+                <label class="remember-login">
+                    <input type="checkbox" name="remember" value="1">
+                    <span>Eingeloggt bleiben</span>
+                </label>
+
+                <button type="submit" class="login-button">
+                    Anmelden
+                </button>
+            </form>
+
+            <div class="login-footer">
+                Keepalived Monitor
+            </div>
+        </div>
+    </main>
 
     <script src="/static/login.js"></script>
 </body>
