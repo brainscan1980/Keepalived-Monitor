@@ -2,4 +2,7 @@ module github.com/brainscan1980/Keepalived-Monitor
 
 go 1.25
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.39.1
+)
