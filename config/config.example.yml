@@ -1,4 +1,5 @@
 refresh_seconds: 5
+
 ssh:
   connect_timeout: 3
   key_file: /root/.ssh/id_ed25519
@@ -12,22 +13,24 @@ notifications:
 
 nodes:
   - name: Pi-01-6
-    host: 192.168.1.10
+    host: 192.168.178.6
     user: root
   - name: Pi-02-8
-    host: 192.168.1.11
+    host: 192.168.178.8
     user: root
   - name: Pi-03-5
-    host: 192.168.1.12
+    host: 192.168.178.5
     user: root
 
+# Replace the example VIPs below with the actual Keepalived virtual IPs
+# before starting the parallel Go test deployment.
 vrrp:
   - name: DNS
-    vip: 192.168.1.100
+    vip: 192.168.178.11
     nodes: [Pi-01-6, Pi-02-8, Pi-03-5]
   - name: Caddy
-    vip: 192.168.1.101
+    vip: 192.168.178.250
     nodes: [Pi-01-6, Pi-02-8]
   - name: Vaultwarden
-    vip: 192.168.1.102
+    vip: 192.168.178.251
     nodes: [Pi-01-6, Pi-02-8]
