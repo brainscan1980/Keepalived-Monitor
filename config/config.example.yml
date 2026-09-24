@@ -22,15 +22,13 @@ nodes:
     host: 192.168.178.5
     user: root
 
-# Replace the example VIPs below with the actual Keepalived virtual IPs
-# before starting the parallel Go test deployment.
 vrrp:
   - name: DNS
     vip: 192.168.178.11
     nodes: [Pi-01-6, Pi-02-8, Pi-03-5]
   - name: Caddy
-    vip: 192.168.178.250
+    vip: 192.168.178.12
     nodes: [Pi-01-6, Pi-02-8]
   - name: Vaultwarden
-    vip: 192.168.178.251
+    vip: 192.168.178.14
     nodes: [Pi-01-6, Pi-02-8]
