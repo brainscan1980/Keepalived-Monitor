@@ -2,11 +2,12 @@ FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
+COPY internal ./internal
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/keepalived-monitor ./cmd/keepalived-monitor
+RUN go mod download && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/keepalived-monitor ./cmd/keepalived-monitor
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata && addgroup -S monitor && adduser -S -G monitor monitor
+RUN apk add --no-cache ca-certificates tzdata openssh-client && addgroup -S monitor && adduser -S -G monitor monitor
 WORKDIR /app
 COPY --from=builder /out/keepalived-monitor /usr/local/bin/keepalived-monitor
 USER monitor
