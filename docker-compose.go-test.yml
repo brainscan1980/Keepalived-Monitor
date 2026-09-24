@@ -1,0 +1,26 @@
+services:
+  keepalived-monitor-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+      args:
+        VERSION: go-rewrite
+    image: keepalived-monitor:go-rewrite
+    container_name: keepalived-monitor-go
+    restart: unless-stopped
+    ports:
+      - "5010:8080"
+    volumes:
+      - ./config-go:/app/config:ro
+      - ./ssh:/root/.ssh:ro
+      - ./data-go:/app/data
+    environment:
+      TZ: Europe/Berlin
+      CONFIG_FILE: /app/config/config.yml
+      DB_FILE: /app/data/history.db
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
