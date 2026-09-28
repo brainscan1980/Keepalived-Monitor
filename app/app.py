@@ -18,6 +18,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','false').lower()=='true',
     PERMANENT_SESSION_LIFETIME=timedelta(days=365),
+    SEND_FILE_MAX_AGE_DEFAULT=300,
 )
 CONFIG_FILE=os.getenv('CONFIG_FILE','/app/config/config.yml'); DB='/app/data/history.db'; SETTINGS_FILE='/app/data/settings.json'
 lock=threading.Lock(); notification_lock=threading.Lock(); settings_lock=threading.Lock(); availability_lock=threading.Lock(); cache={'nodes':{},'vrrp':[],'cluster':{'status':'UNKNOWN','message':'Noch keine Daten'},'updated':None}
