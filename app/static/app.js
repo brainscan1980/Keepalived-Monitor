@@ -61,4 +61,33 @@ vrrpEl.innerHTML=(s.vrrp||[]).map(v=>{
 }).join('');
 
 renderClusterValidation(cluster.validation);document.querySelector('#updated').textContent='Letztes Update: '+(s.updated?new Date(s.updated).toLocaleString():'–');}catch(e){const clusterEl=document.querySelector('#cluster');clusterEl.className='pill header-cluster cluster-bad';clusterEl.style.cssText=document.documentElement.classList.contains('dark')?'':clusterLightStyle('bad');clusterEl.innerHTML='<span class="cluster-status-main bad"><i class="dot"></i>UNKNOWN</span><small class="cluster-status-sub">Dashboard nicht erreichbar</small>';clusterEl.title='Dashboard nicht erreichbar'}}
-const systemDark=window.matchMedia('(prefers-color-scheme: dark)'),getTheme=()=>localStorage.getItem('theme')||'auto';function applyTheme(mode=getTheme()){const dark=mode==='dark'||(mode==='auto'&&systemDark.matches);document.documentElement.classList.toggle('dark',dark);document.documentElement.dataset.theme=mode;document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===mode));const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=dark?'#0c1118':'#f4f6f8';const clusterEl=document.querySelector('#cluster');if(clusterEl){const state=['good','warn','bad','unknown'].find(x=>clusterEl.classList.contains(`cluster-${x}`))||'unknown';clusterEl.style.cssText=dark?'':clusterLightStyle(state)}}document.querySelectorAll('[data-theme]').forEach(b=>b.addEventListener('click',()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)}));systemDark.addEventListener?.('change',()=>{if(getTheme()==='auto')applyTheme('auto')});initSidebar();applyTheme();setInterval(load,5000);load();if('serviceWorker'in navigator)navigator.serviceWorker.register('/static/service-worker.js');
+const systemDark=window.matchMedia('(prefers-color-scheme: dark)'),getTheme=()=>localStorage.getItem('theme')||'auto';function applyTheme(mode=getTheme()){const dark=mode==='dark'||(mode==='auto'&&systemDark.matches);document.documentElement.classList.toggle('dark',dark);document.documentElement.dataset.theme=mode;document.querySelectorAll('[data-theme]').forEach(b=>b.classList.toggle('active',b.dataset.theme===mode));const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=dark?'#0c1118':'#f4f6f8';const clusterEl=document.querySelector('#cluster');if(clusterEl){const state=['good','warn','bad','unknown'].find(x=>clusterEl.classList.contains(`cluster-${x}`))||'unknown';clusterEl.style.cssText=dark?'':clusterLightStyle(state)}}document.querySelectorAll('[data-theme]').forEach(b=>b.addEventListener('click',()=>{localStorage.setItem('theme',b.dataset.theme);applyTheme(b.dataset.theme)}));systemDark.addEventListener?.('change',()=>{if(getTheme()==='auto')applyTheme('auto')});initSidebar();applyTheme();
+
+let dashboardPollTimer=null;
+
+function startDashboardPolling(){
+    if(dashboardPollTimer)return;
+    dashboardPollTimer=setInterval(()=>{
+        if(!document.hidden)load();
+    },5000);
+}
+
+function stopDashboardPolling(){
+    if(!dashboardPollTimer)return;
+    clearInterval(dashboardPollTimer);
+    dashboardPollTimer=null;
+}
+
+document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){
+        stopDashboardPolling();
+    }else{
+        load();
+        startDashboardPolling();
+    }
+});
+
+load();
+if(!document.hidden)startDashboardPolling();
+
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/static/service-worker.js');
